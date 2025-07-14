@@ -1,6 +1,6 @@
 # DOFUS Models
 
-A shared Go library containing GORM models and database operations for DOFUS Retro data.
+A shared Go library containing GORM models and database operations for DOFUS Retro data. :D
 
 ## Features
 
