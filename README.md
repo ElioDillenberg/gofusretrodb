@@ -1,4 +1,4 @@
-# DOFUS Models
+# GOFUS Retro DB
 
 A shared Go library containing GORM models and database operations for DOFUS Retro data. :D
 
@@ -13,10 +13,10 @@ A shared Go library containing GORM models and database operations for DOFUS Ret
 ## Usage
 
 ```go
-import "github.com/eliodillenberg/dofus-models"
+import "github.com/eliodillenberg/gofusretrodb"
 
 // Create database service
-db, err := dofusmodels.NewDatabaseService("postgres://...")
+db, err := gofusretrodb.NewDatabaseService("postgres://...")
 if err != nil {
     log.Fatal(err)
 }
