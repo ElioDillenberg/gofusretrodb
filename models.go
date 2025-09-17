@@ -6,11 +6,11 @@ import (
 
 // Item represents a DOFUS item (from SWF parser)
 type Item struct {
-	ID           int            `json:"id"`
-	TypeID       int            `json:"type_id"`
-	Level        int            `json:"level"`
-	Requirements string         `json:"requirements"`
-	Stats        string         `json:"stats"`
+	ID           int               `json:"id"`
+	TypeID       int               `json:"type_id"`
+	Level        int               `json:"level"`
+	Requirements string            `json:"requirements"`
+	Stats        string            `json:"stats"`
 	Translations []ItemTranslation `json:"translations"`
 }
 
@@ -39,6 +39,8 @@ type ItemModel struct {
 	Translations []ItemTranslationModel `json:"translations" gorm:"foreignKey:ItemID"`
 	Effects      []ItemEffectModel      `json:"effects" gorm:"foreignKey:ItemID"`
 	Conditions   []ItemConditionModel   `json:"conditions" gorm:"foreignKey:ItemID"`
+	Recipe       *RecipeModel           `json:"recipe,omitempty" gorm:"foreignKey:ItemID"`
+	Ingredients  []IngredientModel      `json:"ingredients,omitempty" gorm:"foreignKey:ItemID"`
 }
 
 func (ItemModel) TableName() string {
@@ -118,11 +120,11 @@ func (ItemConditionModel) TableName() string {
 
 // ItemSetModel represents equipment sets
 type ItemSetModel struct {
-	ID           uint                       `json:"id" gorm:"primaryKey"`
-	CreatedAt    time.Time                  `json:"created_at"`
-	UpdatedAt    time.Time                  `json:"updated_at"`
-	Items        []ItemModel                `json:"items" gorm:"many2many:item_set_items;"`
-	Translations []ItemSetTranslationModel  `json:"translations" gorm:"foreignKey:ItemSetID"`
+	ID           uint                      `json:"id" gorm:"primaryKey"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	UpdatedAt    time.Time                 `json:"updated_at"`
+	Items        []ItemModel               `json:"items" gorm:"many2many:item_set_items;"`
+	Translations []ItemSetTranslationModel `json:"translations" gorm:"foreignKey:ItemSetID"`
 }
 
 func (ItemSetModel) TableName() string {
@@ -146,12 +148,12 @@ func (ItemSetTranslationModel) TableName() string {
 
 // RecipeModel represents crafting recipes
 type RecipeModel struct {
-	ID          uint                `json:"id" gorm:"primaryKey"`
-	ItemID      uint                `json:"item_id" gorm:"not null"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
-	Item        ItemModel           `json:"item" gorm:"foreignKey:ItemID"`
-	Ingredients []IngredientModel   `json:"ingredients" gorm:"foreignKey:RecipeID"`
+	ID          uint              `json:"id" gorm:"primaryKey"`
+	ItemID      uint              `json:"item_id" gorm:"not null"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	Item        ItemModel         `json:"item" gorm:"foreignKey:ItemID"`
+	Ingredients []IngredientModel `json:"ingredients" gorm:"foreignKey:RecipeID"`
 }
 
 func (RecipeModel) TableName() string {
@@ -160,14 +162,14 @@ func (RecipeModel) TableName() string {
 
 // IngredientModel represents recipe ingredients
 type IngredientModel struct {
-	ID           uint        `json:"id" gorm:"primaryKey"`
-	RecipeID     uint        `json:"recipe_id" gorm:"not null"`
-	ItemID       uint        `json:"item_id" gorm:"not null"`
-	Quantity     int         `json:"quantity" gorm:"not null"`
-	CreatedAt    time.Time   `json:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at"`
-	Recipe       RecipeModel `json:"recipe" gorm:"foreignKey:RecipeID"`
-	Item         ItemModel   `json:"item" gorm:"foreignKey:ItemID"`
+	ID        uint        `json:"id" gorm:"primaryKey"`
+	RecipeID  uint        `json:"recipe_id" gorm:"not null"`
+	ItemID    uint        `json:"item_id" gorm:"not null"`
+	Quantity  int         `json:"quantity" gorm:"not null"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Recipe    RecipeModel `json:"recipe" gorm:"foreignKey:RecipeID"`
+	Item      ItemModel   `json:"item" gorm:"foreignKey:ItemID"`
 }
 
 func (IngredientModel) TableName() string {
