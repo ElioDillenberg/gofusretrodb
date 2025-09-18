@@ -1,6 +1,6 @@
 module github.com/eliodillenberg/gofusretrodb
 
-go 1.23.1
+go 1.25.1
 
 require (
 	gorm.io/driver/postgres v1.5.9

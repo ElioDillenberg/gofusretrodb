@@ -32,7 +32,7 @@ func NewDatabaseService(dsn string) (*DatabaseService, error) {
 	}
 
 	service := &DatabaseService{db: db}
-	
+
 	// Initialize schema
 	if err := service.initSchema(); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %v", err)
@@ -104,7 +104,7 @@ func (ds *DatabaseService) ClearAllData() error {
 	return nil
 }
 
-// SaveItems saves parsed items to the database  
+// SaveItems saves parsed items to the database
 func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 	// Begin transaction
 	tx := ds.db.Begin()
@@ -125,7 +125,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 
 	// Step 1: Use French as master language to create items based on AnkaId
 	// Then add translations from other languages
-	itemMap := make(map[int]*ItemModel) // AnkaId -> ItemModel
+	itemMap := make(map[int]*ItemModel)                             // AnkaId -> ItemModel
 	translationMap := make(map[int]map[string]ItemTranslationModel) // AnkaId -> language -> translation
 
 	// First pass: Process French items to create the base items
@@ -137,7 +137,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 
 			translation := item.Translations[0]
 			itemMap[item.ID] = &ItemModel{
-				AnkaId:       item.ID,  // Store original DOFUS item ID
+				AnkaId:       item.ID,     // Store original DOFUS item ID
 				TypeAnkaId:   item.TypeID, // Store original DOFUS type ID (references ItemType.AnkaId)
 				Level:        item.Level,
 				Requirements: item.Requirements,
@@ -145,10 +145,10 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				CreatedAt:    time.Now(),
 				UpdatedAt:    time.Now(),
 			}
-			
+
 			// Initialize translation map for this item
 			translationMap[item.ID] = make(map[string]ItemTranslationModel)
-			
+
 			// Add French translation
 			translationMap[item.ID]["fr"] = ItemTranslationModel{
 				Language:    "fr",
@@ -166,7 +166,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 		if language == "fr" {
 			continue // Already processed French
 		}
-		
+
 		for _, item := range items {
 			if len(item.Translations) == 0 || item.ID == 0 {
 				continue
@@ -184,7 +184,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					CreatedAt:   time.Now(),
 					UpdatedAt:   time.Now(),
 				}
-				
+
 				// Update item data with more complete information if available
 				if item.Level > existingItem.Level {
 					existingItem.Level = item.Level
@@ -199,7 +199,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				// This item exists in non-French language but not in French
 				// Create it anyway but log this situation
 				fmt.Printf("Warning: Item AnkaId %d exists in %s but not in French\n", item.ID, language)
-				
+
 				translation := item.Translations[0]
 				itemMap[item.ID] = &ItemModel{
 					AnkaId:       item.ID,
@@ -210,7 +210,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					CreatedAt:    time.Now(),
 					UpdatedAt:    time.Now(),
 				}
-				
+
 				translationMap[item.ID] = make(map[string]ItemTranslationModel)
 				translationMap[item.ID][language] = ItemTranslationModel{
 					Language:    language,
@@ -232,7 +232,7 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 			tx.Rollback()
 			return fmt.Errorf("failed to insert item with AnkaId %d: %v", ankaId, err)
 		}
-		
+
 		// Debug: log first few AnkaIds
 		if itemsInserted < 5 {
 			fmt.Printf("Debug: Inserted item with AnkaId=%d, PostgresID=%d\n", item.AnkaId, item.ID)
@@ -283,17 +283,17 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 		}
 
 		item := map[string]interface{}{
-			"id":             result.ID,
-			"anka_id":        result.AnkaId,
-			"type_anka_id":   result.TypeAnkaId,
-			"type_name":      result.TypeName,
-			"level":          result.Level,
-			"requirements":   result.Requirements,
-			"stats":          statsMap,
-			"name":           result.Translation.Name,
-			"name_upper":     result.Translation.NameUpper,
-			"description":    result.Translation.Description,
-			"language":       language,
+			"id":           result.ID,
+			"anka_id":      result.AnkaId,
+			"type_anka_id": result.TypeAnkaId,
+			"type_name":    result.TypeName,
+			"level":        result.Level,
+			"requirements": result.Requirements,
+			"stats":        statsMap,
+			"name":         result.Translation.Name,
+			"name_upper":   result.Translation.NameUpper,
+			"description":  result.Translation.Description,
+			"language":     language,
 		}
 
 		items = append(items, item)
@@ -302,56 +302,36 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 	return items, nil
 }
 
-// GetItemByIDAndLanguage retrieves a specific item by AnkaId with translation for a specific language
-func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (map[string]interface{}, error) {
-	// Query for item with translation directly - this handles duplicate anka_ids correctly
-	var result struct {
-		ItemTranslationModel
-		TypeName      string `gorm:"column:type_name"`
-		ItemAnkaId    int    `gorm:"column:item_anka_id"`
-		ItemLevel     int    `gorm:"column:item_level"`
-		ItemRequirements string `gorm:"column:item_requirements"`
-		ItemStats     string `gorm:"column:item_stats"`
-		TypeAnkaId    int    `gorm:"column:type_anka_id"`
+func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]ItemModel, error) {
+	var items []ItemModel
+	var err error
+
+	trimmedSearch := strings.TrimSpace(search)
+
+	// Handle empty search - return empty result or limit results
+	if trimmedSearch == "" {
+		err = ds.db.Preload("Translations", "language = ?", language).
+			Preload("Ingredients").
+			Preload("Recipe").
+			Joins("JOIN item_translations it ON items.id = it.item_id").
+			Limit(50).
+			Find(&items).Error
+
+		return items, err
 	}
 
-	err := ds.db.Table("item_translations it").
-		Select("it.*, tt.name as type_name, i.anka_id as item_anka_id, i.level as item_level, i.requirements as item_requirements, i.stats as item_stats, i.type_anka_id as type_anka_id").
-		Joins("JOIN items i ON it.item_id = i.id").
-		Joins("LEFT JOIN item_types itype ON i.type_anka_id = itype.anka_id").
-		Joins("LEFT JOIN item_type_translations tt ON itype.id = tt.item_type_id AND tt.language = it.language").
-		Where("i.anka_id = ? AND it.language = ?", ankaId, language).
-		First(&result).Error
+	err = ds.db.Preload("Translations", "language = ?", language).
+		Preload("Ingredients").
+		Preload("Recipe").
+		Joins("JOIN item_translations it ON items.id = it.item_id").
+		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%").
+		Find(&items).Error
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, nil // No translation found for this language
-		}
-		return nil, fmt.Errorf("failed to query item %d for language %s: %v", ankaId, language, err)
+		return nil, fmt.Errorf("failed to search items: %v", err)
 	}
 
-	// Parse stats JSON
-	var statsMap map[string]interface{}
-	if result.ItemStats != "" && result.ItemStats != "{}" {
-		json.Unmarshal([]byte(result.ItemStats), &statsMap)
-	}
-
-	// Build result with single language
-	item := map[string]interface{}{
-		"id":             result.ItemID,
-		"anka_id":        result.ItemAnkaId,
-		"type_anka_id":   result.TypeAnkaId,
-		"level":          result.ItemLevel,
-		"requirements":   result.ItemRequirements,
-		"stats":          statsMap,
-		"name":           result.Name,
-		"name_upper":     result.NameUpper,
-		"description":    result.Description,
-		"type_name":      result.TypeName,
-		"language":       language,
-	}
-
-	return item, nil
+	return items, nil
 }
 
 // GetItemPrimaryKeyByAnkaId finds the PostgreSQL primary key for an item by its original DOFUS ID
@@ -456,7 +436,7 @@ func (ds *DatabaseService) SaveItemTypes(allItemTypes map[string][]ItemTypeDefin
 	if err := ds.db.Model(&ItemTypeModel{}).Count(&existingTypeCount).Error; err != nil {
 		return fmt.Errorf("failed to count existing item types: %v", err)
 	}
-	
+
 	if existingTypeCount > 0 {
 		fmt.Printf("Found %d existing item types. Using upsert strategy instead of clearing...\n", existingTypeCount)
 		return ds.upsertItemTypes(allItemTypes)
@@ -484,14 +464,14 @@ func (ds *DatabaseService) SaveItemTypes(allItemTypes map[string][]ItemTypeDefin
 	// Insert item types (one record per type ID)
 	for typeID, category := range allTypeIDs {
 		itemType := ItemTypeModel{
-			AnkaId:  typeID,                              // Store original SWF type ID
-			KeyName: fmt.Sprintf("type_%d", typeID),     // Dynamic key name
+			AnkaId:  typeID,                         // Store original SWF type ID
+			KeyName: fmt.Sprintf("type_%d", typeID), // Dynamic key name
 		}
 		if err := tx.Create(&itemType).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to insert item type %d: %v", typeID, err)
 		}
-		
+
 		// Keep category for potential future use
 		_ = category
 	}
@@ -505,7 +485,7 @@ func (ds *DatabaseService) SaveItemTypes(allItemTypes map[string][]ItemTypeDefin
 				tx.Rollback()
 				return fmt.Errorf("failed to find item type with AnkaId %d: %v", itemType.ID, err)
 			}
-			
+
 			translation := ItemTypeTranslationModel{
 				ItemTypeID: dbItemType.ID, // Use database primary key
 				Language:   language,
@@ -528,7 +508,7 @@ func (ds *DatabaseService) SaveItemTypes(allItemTypes map[string][]ItemTypeDefin
 // upsertItemTypes updates existing item types or inserts new ones
 func (ds *DatabaseService) upsertItemTypes(allItemTypes map[string][]ItemTypeDefinition) error {
 	fmt.Println("Upserting item types and translations...")
-	
+
 	// Collect all unique item type IDs across languages
 	allTypeIDs := make(map[int]int) // ID -> category
 	for _, itemTypes := range allItemTypes {
@@ -543,12 +523,12 @@ func (ds *DatabaseService) upsertItemTypes(allItemTypes map[string][]ItemTypeDef
 			AnkaId:  typeID,
 			KeyName: fmt.Sprintf("type_%d", typeID),
 		}
-		
+
 		// Use GORM's FirstOrCreate to handle existing records by AnkaId
 		if err := ds.db.FirstOrCreate(&itemType, "anka_id = ?", typeID).Error; err != nil {
 			return fmt.Errorf("failed to upsert item type %d: %v", typeID, err)
 		}
-		
+
 		_ = category // Keep for potential future use
 	}
 
@@ -560,13 +540,13 @@ func (ds *DatabaseService) upsertItemTypes(allItemTypes map[string][]ItemTypeDef
 			if err := ds.db.Where("anka_id = ?", itemType.ID).First(&dbItemType).Error; err != nil {
 				return fmt.Errorf("failed to find item type with AnkaId %d: %v", itemType.ID, err)
 			}
-			
+
 			translation := ItemTypeTranslationModel{
 				ItemTypeID: dbItemType.ID, // Use database primary key
 				Language:   language,
 				Name:       itemType.Name,
 			}
-			
+
 			// Use FirstOrCreate for translations
 			if err := ds.db.FirstOrCreate(&translation, "item_type_id = ? AND language = ?", dbItemType.ID, language).Error; err != nil {
 				return fmt.Errorf("failed to upsert item type translation: %v", err)
@@ -602,4 +582,56 @@ func (ds *DatabaseService) GetRecipeByItemID(ankaId int, language string) (*Reci
 	}
 
 	return &recipe, nil
+}
+
+// GetItemByIDAndLanguage retrieves a specific item by AnkaId with translation for a specific language
+func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (map[string]interface{}, error) {
+	// Query for item with translation directly - this handles duplicate anka_ids correctly
+	var result struct {
+		ItemTranslationModel
+		TypeName         string `gorm:"column:type_name"`
+		ItemAnkaId       int    `gorm:"column:item_anka_id"`
+		ItemLevel        int    `gorm:"column:item_level"`
+		ItemRequirements string `gorm:"column:item_requirements"`
+		ItemStats        string `gorm:"column:item_stats"`
+		TypeAnkaId       int    `gorm:"column:type_anka_id"`
+	}
+
+	err := ds.db.Table("item_translations it").
+		Select("it.*, tt.name as type_name, i.anka_id as item_anka_id, i.level as item_level, i.requirements as item_requirements, i.stats as item_stats, i.type_anka_id as type_anka_id").
+		Joins("JOIN items i ON it.item_id = i.id").
+		Joins("LEFT JOIN item_types itype ON i.type_anka_id = itype.anka_id").
+		Joins("LEFT JOIN item_type_translations tt ON itype.id = tt.item_type_id AND tt.language = it.language").
+		Where("i.anka_id = ? AND it.language = ?", ankaId, language).
+		First(&result).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil // No translation found for this language
+		}
+		return nil, fmt.Errorf("failed to query item %d for language %s: %v", ankaId, language, err)
+	}
+
+	// Parse stats JSON
+	var statsMap map[string]interface{}
+	if result.ItemStats != "" && result.ItemStats != "{}" {
+		json.Unmarshal([]byte(result.ItemStats), &statsMap)
+	}
+
+	// Build result with single language
+	item := map[string]interface{}{
+		"id":           result.ItemID,
+		"anka_id":      result.ItemAnkaId,
+		"type_anka_id": result.TypeAnkaId,
+		"level":        result.ItemLevel,
+		"requirements": result.ItemRequirements,
+		"stats":        statsMap,
+		"name":         result.Name,
+		"name_upper":   result.NameUpper,
+		"description":  result.Description,
+		"type_name":    result.TypeName,
+		"language":     language,
+	}
+
+	return item, nil
 }
