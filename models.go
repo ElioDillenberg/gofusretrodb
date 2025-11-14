@@ -9,6 +9,9 @@ type Item struct {
 	ID           int               `json:"id"`
 	TypeID       int               `json:"type_id"`
 	Level        int               `json:"level"`
+	Price        int               `json:"price"`
+	Weight       int               `json:"weight"`
+	GfxID        int               `json:"gfx_id"`
 	Requirements string            `json:"requirements"`
 	Stats        string            `json:"stats"`
 	Translations []ItemTranslation `json:"translations"`

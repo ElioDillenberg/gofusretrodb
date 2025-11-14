@@ -142,6 +142,9 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				Level:        item.Level,
 				Requirements: item.Requirements,
 				Stats:        item.Stats,
+				GfxID:        item.GfxID,
+				Price:        item.Price,
+				Weight:       item.Weight,
 				CreatedAt:    time.Now(),
 				UpdatedAt:    time.Now(),
 			}
@@ -311,8 +314,7 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 	// Handle empty search - return empty result or limit results
 	if trimmedSearch == "" {
 		err = ds.db.Preload("Translations", "language = ?", language).
-			Preload("Ingredients").
-			Preload("Recipe").
+			Preload("Recipe.Ingredients.Item.Translations").
 			Joins("JOIN item_translations it ON items.id = it.item_id").
 			Limit(50).
 			Find(&items).Error
@@ -321,8 +323,7 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 	}
 
 	err = ds.db.Preload("Translations", "language = ?", language).
-		Preload("Ingredients").
-		Preload("Recipe").
+		Preload("Recipe.Ingredients.Item.Translations").
 		Joins("JOIN item_translations it ON items.id = it.item_id").
 		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%").
 		Find(&items).Error
