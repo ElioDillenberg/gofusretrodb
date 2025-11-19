@@ -338,6 +338,58 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 	return items, nil
 }
 
+// GetItemsSearchPaginated retrieves items with pagination and priority sorting at the database level
+func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string, limit, offset int) (items []ItemModel, totalCount int, err error) {
+	trimmedSearch := strings.TrimSpace(searchValue)
+
+	// Build the base query
+	baseQuery := ds.db.Table("items").
+		Joins("JOIN item_translations it ON items.id = it.item_id").
+		Where("it.language = ?", language)
+
+	// Add search filter if provided
+	if trimmedSearch != "" {
+		baseQuery = baseQuery.Where("LOWER(it.name) LIKE LOWER(?)", "%"+trimmedSearch+"%")
+	}
+
+	// Get total count
+	var count int64
+	countQuery := baseQuery.Count(&count)
+	if countQuery.Error != nil {
+		return nil, 0, fmt.Errorf("failed to count items: %v", countQuery.Error)
+	}
+	totalCount = int(count)
+
+	// Build the main query with priority sorting
+	query := ds.db.Preload("Translations", "language = ?", language).
+		Preload("Recipe.Ingredients.Item.Translations").
+		Joins("JOIN item_translations it ON items.id = it.item_id").
+		Where("it.language = ?", language)
+
+	// Add search filter if provided
+	if trimmedSearch != "" {
+		query = query.Where("LOWER(it.name) LIKE LOWER(?)", "%"+trimmedSearch+"%")
+
+		// Priority sorting: items starting with search term come first
+		query = query.Order(fmt.Sprintf(
+			"CASE WHEN LOWER(it.name) LIKE LOWER('%s%%') THEN 0 ELSE 1 END",
+			strings.ReplaceAll(trimmedSearch, "'", "''"), // Escape single quotes for SQL safety
+		))
+	}
+
+	// Add secondary sorting by name and apply pagination
+	query = query.Order("it.name ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&items)
+
+	if query.Error != nil {
+		return nil, 0, fmt.Errorf("failed to search items: %v", query.Error)
+	}
+
+	return items, totalCount, nil
+}
+
 // GetItemPrimaryKeyByAnkaId finds the PostgreSQL primary key for an item by its original DOFUS ID
 func (ds *DatabaseService) GetItemPrimaryKeyByAnkaId(ankaId int) (uint, error) {
 	var item ItemModel
