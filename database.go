@@ -373,7 +373,6 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 	query := ds.db.
 		Preload("Translations", "language = ?", language).
 		Preload("Type.Translations", "language = ?", language).
-		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
 		Joins("JOIN item_translations it ON items.id = it.item_id").
 		Where("it.language = ?", language)
 
@@ -401,6 +400,13 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 
 	if query.Error != nil {
 		return nil, 0, fmt.Errorf("failed to search items: %v", query.Error)
+	}
+
+	// Recursively load full recipe trees for all items (max depth 10)
+	for i := range items {
+		if err := ds.LoadRecipeRecursive(&items[i], language, 10, 0); err != nil {
+			return nil, 0, fmt.Errorf("failed to load recipe tree for item %d: %v", items[i].ID, err)
+		}
 	}
 
 	return items, totalCount, nil
@@ -773,4 +779,109 @@ func (ds *DatabaseService) DiagnoseRecipes(language string) error {
 	}
 
 	return nil
+}
+
+// LoadRecipeRecursive recursively loads the recipe and all ingredient recipes to build a complete crafting tree
+func (ds *DatabaseService) LoadRecipeRecursive(item *ItemModel, language string, maxDepth int, currentDepth int) error {
+	// Prevent infinite recursion
+	if currentDepth >= maxDepth {
+		return nil
+	}
+
+	// Load the recipe for this item if it exists
+	var recipe RecipeModel
+	err := ds.db.Preload("Ingredients").
+		Where("item_id = ?", item.ID).
+		First(&recipe).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// No recipe found - this is a base material
+			return nil
+		}
+		return fmt.Errorf("failed to load recipe: %v", err)
+	}
+
+	// Attach recipe to item
+	item.Recipe = &recipe
+
+	// For each ingredient, load the item details and recursively load its recipe
+	for i := range recipe.Ingredients {
+		ingredient := &recipe.Ingredients[i]
+
+		// Load the ingredient item with translations
+		var ingredientItem ItemModel
+		err := ds.db.Preload("Translations", "language = ?", language).
+			Preload("Type.Translations", "language = ?", language).
+			Where("id = ?", ingredient.ItemID).
+			First(&ingredientItem).Error
+
+		if err != nil {
+			return fmt.Errorf("failed to load ingredient item %d: %v", ingredient.ItemID, err)
+		}
+
+		// Recursively load the recipe for this ingredient item
+		if err := ds.LoadRecipeRecursive(&ingredientItem, language, maxDepth, currentDepth+1); err != nil {
+			return err
+		}
+
+		// Attach the fully loaded item to the ingredient
+		ingredient.Item = ingredientItem
+	}
+
+	return nil
+}
+
+// GetItemWithFullRecipeTree retrieves an item by AnkaId with its complete recipe tree recursively loaded
+func (ds *DatabaseService) GetItemWithFullRecipeTree(ankaId int, language string, maxDepth int) (*ItemModel, error) {
+	if maxDepth <= 0 {
+		maxDepth = 10 // Default max depth to prevent infinite loops
+	}
+
+	// Load the base item with translations
+	var item ItemModel
+	err := ds.db.Preload("Translations", "language = ?", language).
+		Preload("Type.Translations", "language = ?", language).
+		Where("anka_id = ?", ankaId).
+		First(&item).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to load item: %v", err)
+	}
+
+	// Recursively load all recipes and ingredients
+	if err := ds.LoadRecipeRecursive(&item, language, maxDepth, 0); err != nil {
+		return nil, err
+	}
+
+	return &item, nil
+}
+
+// GetItemsWithRecipeTree retrieves multiple items with their complete recipe trees
+func (ds *DatabaseService) GetItemsWithRecipeTree(ankaIds []int, language string, maxDepth int) ([]ItemModel, error) {
+	if maxDepth <= 0 {
+		maxDepth = 10
+	}
+
+	var items []ItemModel
+	err := ds.db.Preload("Translations", "language = ?", language).
+		Preload("Type.Translations", "language = ?", language).
+		Where("anka_id IN ?", ankaIds).
+		Find(&items).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load items: %v", err)
+	}
+
+	// Recursively load recipes for each item
+	for i := range items {
+		if err := ds.LoadRecipeRecursive(&items[i], language, maxDepth, 0); err != nil {
+			return nil, err
+		}
+	}
+
+	return items, nil
 }
