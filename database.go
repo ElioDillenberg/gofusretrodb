@@ -404,7 +404,7 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 
 	// Recursively load full recipe trees for all items (max depth 10)
 	for i := range items {
-		if err := ds.LoadRecipeRecursive(&items[i], language, 10, 0); err != nil {
+		if err := ds.LoadRecipeRecursive(&items[i], language, 2, 0); err != nil {
 			return nil, 0, fmt.Errorf("failed to load recipe tree for item %d: %v", items[i].ID, err)
 		}
 	}
