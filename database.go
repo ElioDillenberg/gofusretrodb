@@ -300,7 +300,7 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 	return items, nil
 }
 
-func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]ItemModel, error) {
+func (ds *DatabaseService) GetItemsSearch(search string, language string, typeAnkaIDs []int) ([]ItemModel, error) {
 	var items []ItemModel
 	var err error
 
@@ -308,21 +308,32 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 
 	// Handle empty search - return empty result or limit results
 	if trimmedSearch == "" {
-		err = ds.db.Preload("Translations", "language = ?", language).
+		query := ds.db.Preload("Translations", "language = ?", language).
 			Preload("Recipe.Ingredients.Item.Translations").
 			Joins("JOIN item_translations it ON items.id = it.item_id").
-			Limit(50).
-			Find(&items).Error
+			Limit(50)
 
+		// Add type filter if provided
+		if len(typeAnkaIDs) > 0 {
+			query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
+		}
+
+		err = query.Find(&items).Error
 		return items, err
 	}
 
-	err = ds.db.Preload("Translations", "language = ?", language).
+	query := ds.db.Preload("Translations", "language = ?", language).
 		Preload("Type.Translations", "language = ?", language).
 		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
 		Joins("JOIN item_translations it ON items.id = it.item_id").
-		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%").
-		Find(&items).Error
+		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%")
+
+	// Add type filter if provided
+	if len(typeAnkaIDs) > 0 {
+		query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
+	}
+
+	err = query.Find(&items).Error
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to search items: %v", err)
@@ -332,7 +343,7 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 }
 
 // GetItemsSearchPaginated retrieves items with pagination and priority sorting at the database level
-func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string, limit, offset int) (items []ItemModel, totalCount int, err error) {
+func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string, typeAnkaIDs []int, limit, offset int) (items []ItemModel, totalCount int, err error) {
 	trimmedSearch := strings.TrimSpace(searchValue)
 
 	// Build the base query
@@ -343,6 +354,11 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 	// Add search filter if provided
 	if trimmedSearch != "" {
 		baseQuery = baseQuery.Where("LOWER(it.name) LIKE LOWER(?)", "%"+trimmedSearch+"%")
+	}
+
+	// Add type filter if provided
+	if len(typeAnkaIDs) > 0 {
+		baseQuery = baseQuery.Where("items.type_anka_id IN ?", typeAnkaIDs)
 	}
 
 	// Get total count
@@ -370,6 +386,11 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 			"CASE WHEN LOWER(it.name) LIKE LOWER('%s%%') THEN 0 ELSE 1 END",
 			strings.ReplaceAll(trimmedSearch, "'", "''"), // Escape single quotes for SQL safety
 		))
+	}
+
+	// Add type filter if provided
+	if len(typeAnkaIDs) > 0 {
+		query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
 	}
 
 	// Add secondary sorting by name and apply pagination
@@ -685,6 +706,22 @@ func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (
 	}
 
 	return item, nil
+}
+
+// GetItemTypesByIDs retrieves item types by their AnkaIDs with translations for a specific language
+func (ds *DatabaseService) GetItemTypesByIDs(ankaIDs []int, language string) ([]ItemTypeModel, error) {
+	var itemTypes []ItemTypeModel
+
+	err := ds.db.
+		Preload("Translations", "language = ?", language).
+		Where("anka_id IN ?", ankaIDs).
+		Find(&itemTypes).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get item types: %v", err)
+	}
+
+	return itemTypes, nil
 }
 
 // DiagnoseRecipes checks if recipes exist and tests preloading
