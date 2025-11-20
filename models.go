@@ -38,7 +38,8 @@ type ItemModel struct {
 	GfxID        int       `json:"gfx_id" gorm:"default:0"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	// Note: Type relationship will be handled manually via TypeAnkaId
+	// Type relationship: TypeAnkaId -> ItemTypeModel.AnkaId
+	Type         *ItemTypeModel         `json:"type,omitempty" gorm:"foreignKey:TypeAnkaId;references:AnkaId"`
 	Translations []ItemTranslationModel `json:"translations" gorm:"foreignKey:ItemID"`
 	Effects      []ItemEffectModel      `json:"effects" gorm:"foreignKey:ItemID"`
 	Conditions   []ItemConditionModel   `json:"conditions" gorm:"foreignKey:ItemID"`

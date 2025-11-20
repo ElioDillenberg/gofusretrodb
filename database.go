@@ -199,10 +199,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					existingItem.Stats = item.Stats
 				}
 			} else {
-				// This item exists in non-French language but not in French
-				// Create it anyway but log this situation
-				fmt.Printf("Warning: Item AnkaId %d exists in %s but not in French\n", item.ID, language)
-
 				translation := item.Translations[0]
 				itemMap[item.ID] = &ItemModel{
 					AnkaId:       item.ID,
@@ -239,10 +235,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 			return fmt.Errorf("failed to insert item with AnkaId %d: %v", ankaId, err)
 		}
 
-		// Debug: log first few AnkaIds
-		if itemsInserted < 5 {
-			fmt.Printf("Debug: Inserted item with AnkaId=%d, PostgresID=%d\n", item.AnkaId, item.ID)
-		}
 		itemsInserted++
 
 		// Insert translations
@@ -326,7 +318,8 @@ func (ds *DatabaseService) GetItemsSearch(search string, language string) ([]Ite
 	}
 
 	err = ds.db.Preload("Translations", "language = ?", language).
-		Preload("Recipe.Ingredients.Item.Translations").
+		Preload("Type.Translations", "language = ?", language).
+		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
 		Joins("JOIN item_translations it ON items.id = it.item_id").
 		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%").
 		Find(&items).Error
@@ -361,8 +354,10 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 	totalCount = int(count)
 
 	// Build the main query with priority sorting
-	query := ds.db.Preload("Translations", "language = ?", language).
-		Preload("Recipe.Ingredients.Item.Translations").
+	query := ds.db.
+		Preload("Translations", "language = ?", language).
+		Preload("Type.Translations", "language = ?", language).
+		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
 		Joins("JOIN item_translations it ON items.id = it.item_id").
 		Where("it.language = ?", language)
 
@@ -690,4 +685,55 @@ func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (
 	}
 
 	return item, nil
+}
+
+// DiagnoseRecipes checks if recipes exist and tests preloading
+func (ds *DatabaseService) DiagnoseRecipes(language string) error {
+	// Check total recipes count
+	var recipeCount int64
+	if err := ds.db.Model(&RecipeModel{}).Count(&recipeCount).Error; err != nil {
+		return fmt.Errorf("failed to count recipes: %v", err)
+	}
+	fmt.Printf("Total recipes in database: %d\n", recipeCount)
+
+	// Check total ingredients count
+	var ingredientCount int64
+	if err := ds.db.Model(&IngredientModel{}).Count(&ingredientCount).Error; err != nil {
+		return fmt.Errorf("failed to count ingredients: %v", err)
+	}
+	fmt.Printf("Total ingredients in database: %d\n", ingredientCount)
+
+	// Find first 5 items that have recipes
+	var items []ItemModel
+	err := ds.db.Preload("Translations", "language = ?", language).
+		Preload("Recipe").
+		Preload("Recipe.Ingredients").
+		Preload("Recipe.Ingredients.Item").
+		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
+		Joins("INNER JOIN recipes ON recipes.item_id = items.id").
+		Limit(5).
+		Find(&items).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to query items with recipes: %v", err)
+	}
+
+	fmt.Printf("\nFound %d items with recipes (showing first 5):\n", len(items))
+	for _, item := range items {
+		if len(item.Translations) > 0 {
+			fmt.Printf("- Item AnkaID=%d, Name=%s", item.AnkaId, item.Translations[0].Name)
+			if item.Recipe != nil {
+				fmt.Printf(" -> Recipe with %d ingredients\n", len(item.Recipe.Ingredients))
+				for _, ing := range item.Recipe.Ingredients {
+					if len(ing.Item.Translations) > 0 {
+						fmt.Printf("    * %dx %s\n", ing.Quantity, ing.Item.Translations[0].Name)
+					}
+				}
+			} else {
+				fmt.Printf(" -> Recipe is nil (NOT LOADED)\n")
+			}
+		}
+	}
+
+	return nil
 }
