@@ -149,6 +149,18 @@ func (ItemSetTranslationModel) TableName() string {
 	return "item_set_translations"
 }
 
+func (StatTypeModel) TableName() string {
+	return "stat_types"
+}
+
+func (StatTypeTranslationModel) TableName() string {
+	return "stat_type_translations"
+}
+
+func (ItemStatModel) TableName() string {
+	return "item_stats"
+}
+
 // RecipeModel represents crafting recipes
 type RecipeModel struct {
 	ID          uint              `json:"id" gorm:"primaryKey"`

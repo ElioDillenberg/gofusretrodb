@@ -893,10 +893,150 @@ func (ds *DatabaseService) GetItemsWithRecipeTree(ankaIds []int, language string
 	return items, nil
 }
 
-func (ds *DatabaseService) SaveItemStats(map[int][]ItemStat) error {
+func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error {
+	if len(itemStatsMap) == 0 {
+		fmt.Println("No item stats to save")
+		return nil
+	}
+
+	fmt.Printf("Saving item stats for %d items...\n", len(itemStatsMap))
+
+	// Begin transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Clear existing item stats
+	if err := tx.Exec("DELETE FROM item_stats").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear item stats: %v", err)
+	}
+
+	totalStats := 0
+	skippedItems := 0
+	skippedStats := 0
+
+	// Iterate through each item's stats
+	for itemAnkaId, stats := range itemStatsMap {
+		// Find the PostgreSQL primary key for this item
+		itemPK, err := ds.GetItemPrimaryKeyByAnkaId(itemAnkaId)
+		if err != nil {
+			// Skip items that don't exist in the database
+			skippedItems++
+			continue
+		}
+
+		// Insert each stat for this item
+		for _, stat := range stats {
+			// Verify that the stat type exists (the hex code should match a StatType ID)
+			var statTypeExists int64
+			if err := tx.Model(&StatTypeModel{}).Where("id = ?", stat.StatTypeId).Count(&statTypeExists).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to check stat type existence: %v", err)
+			}
+
+			if statTypeExists == 0 {
+				// Skip stats with unknown stat type IDs
+				skippedStats++
+				continue
+			}
+
+			itemStatModel := ItemStatModel{
+				ItemID:     int(itemPK),     // Use the PostgreSQL primary key
+				StatTypeID: stat.StatTypeId, // Use the hex code as the stat type ID
+				MinValue:   &stat.MinValue,
+				MaxValue:   &stat.MaxValue,
+				Formula:    stat.Formula,
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+			}
+
+			if err := tx.Create(&itemStatModel).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to insert item stat for item %d, stat type 0x%x: %v", itemAnkaId, stat.StatTypeId, err)
+			}
+
+			totalStats++
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully saved %d item stats (skipped %d items not in DB, %d unknown stat types)\n", totalStats, skippedItems, skippedStats)
 	return nil
 }
 
 func (ds *DatabaseService) SeedStatTypes() error {
+	fmt.Println("Seeding stat types...")
+
+	// Check if stat types already exist
+	var count int64
+	if err := ds.db.Model(&StatTypeModel{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to count stat types: %v", err)
+	}
+
+	if count > 0 {
+		fmt.Printf("Found %d existing stat types, skipping seed\n", count)
+		return nil
+	}
+
+	// Begin transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Insert stat types with their hexadecimal IDs
+	for i, statType := range StatTypeSeedData {
+		statTypeModel := StatTypeModel{
+			ID:           statType.ID, // Use the hexadecimal ID directly
+			Code:         statType.Code,
+			DisplayOrder: i + 1,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		if err := tx.Create(&statTypeModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to insert stat type %s (0x%x): %v", statType.Code, statType.ID, err)
+		}
+
+		// Insert translations for this stat type
+		if translations, exists := StatTypeTranslations[statType.Code]; exists {
+			for language, name := range translations {
+				translation := StatTypeTranslationModel{
+					StatTypeID: statType.ID,
+					Language:   language,
+					Name:       name,
+					CreatedAt:  time.Now(),
+					UpdatedAt:  time.Now(),
+				}
+
+				if err := tx.Create(&translation).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to insert translation for stat type %s (%s): %v", statType.Code, language, err)
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully seeded %d stat types with translations\n", len(StatTypeSeedData))
 	return nil
 }
