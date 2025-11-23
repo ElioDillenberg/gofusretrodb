@@ -79,7 +79,9 @@ func (ds *DatabaseService) initSchema() error {
 		&ItemTypeTranslationModel{},
 		&ItemModel{},
 		&ItemTranslationModel{},
-		&ItemEffectModel{},
+		&ItemStatModel{},
+		&StatTypeModel{},
+		&StatTypeTranslationModel{},
 		&ItemConditionModel{},
 		&ItemSetModel{},
 		&ItemSetTranslationModel{},
@@ -98,8 +100,8 @@ func (ds *DatabaseService) initSchema() error {
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_items_type_anka_id ON items(type_anka_id)")
 	// Create index on anka_id, but allow multiple zeros for existing records
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_items_anka_id ON items(anka_id)")
-	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_effects_item_id ON item_effects(item_id)")
-	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_effects_type ON item_effects(effect_type)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_item_id ON item_effects(item_id)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_type ON item_effects(effect_type)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_conditions_item_id ON item_conditions(item_id)")
 	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_item_set_translations_unique ON item_set_translations(item_set_id, language)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_recipes_item_id ON recipes(item_id)")
@@ -111,7 +113,8 @@ func (ds *DatabaseService) initSchema() error {
 
 // ClearAllData removes all existing item data from the database
 func (ds *DatabaseService) ClearAllData() error {
-	ds.db.Exec("DELETE FROM item_effects")
+	ds.db.Exec("DELETE FROM item_stats")
+	ds.db.Exec("DELETE FROM item_stat_types")
 	ds.db.Exec("DELETE FROM item_conditions")
 	ds.db.Exec("DELETE FROM item_translations")
 	ds.db.Exec("DELETE FROM ingredients")
@@ -157,7 +160,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				TypeAnkaId:   item.TypeID, // Store original DOFUS type ID (references ItemType.AnkaId)
 				Level:        item.Level,
 				Requirements: item.Requirements,
-				Stats:        item.Stats,
 				GfxID:        item.GfxID,
 				Price:        item.Price,
 				Weight:       item.Weight,
@@ -211,9 +213,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				if item.Requirements != "" && existingItem.Requirements == "" {
 					existingItem.Requirements = item.Requirements
 				}
-				if item.Stats != "{}" && item.Stats != "" && (existingItem.Stats == "{}" || existingItem.Stats == "") {
-					existingItem.Stats = item.Stats
-				}
 			} else {
 				translation := item.Translations[0]
 				itemMap[item.ID] = &ItemModel{
@@ -224,7 +223,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					Price:        item.Price,
 					Weight:       item.Weight,
 					Requirements: item.Requirements,
-					Stats:        item.Stats,
 					CreatedAt:    time.Now(),
 					UpdatedAt:    time.Now(),
 				}
@@ -290,12 +288,6 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 
 	var items []map[string]interface{}
 	for _, result := range results {
-		// Parse stats JSON
-		var statsMap map[string]interface{}
-		if result.Stats != "" && result.Stats != "{}" {
-			json.Unmarshal([]byte(result.Stats), &statsMap)
-		}
-
 		item := map[string]interface{}{
 			"id":           result.ID,
 			"anka_id":      result.AnkaId,
@@ -303,7 +295,6 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 			"type_name":    result.TypeName,
 			"level":        result.Level,
 			"requirements": result.Requirements,
-			"stats":        statsMap,
 			"name":         result.Translation.Name,
 			"name_upper":   result.Translation.NameUpper,
 			"description":  result.Translation.Description,
@@ -900,4 +891,12 @@ func (ds *DatabaseService) GetItemsWithRecipeTree(ankaIds []int, language string
 	}
 
 	return items, nil
+}
+
+func (ds *DatabaseService) SaveItemStats(map[int][]ItemStat) error {
+	return nil
+}
+
+func (ds *DatabaseService) SeedStatTypes() error {
+	return nil
 }

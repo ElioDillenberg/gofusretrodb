@@ -13,7 +13,6 @@ type Item struct {
 	Weight       int               `json:"weight"`
 	GfxID        int               `json:"gfx_id"`
 	Requirements string            `json:"requirements"`
-	Stats        string            `json:"stats"`
 	Translations []ItemTranslation `json:"translations"`
 }
 
@@ -90,21 +89,21 @@ func (ItemTypeTranslationModel) TableName() string {
 	return "item_type_translations"
 }
 
-// ItemEffectModel represents item effects/stats
-type ItemEffectModel struct {
-	ID         uint      `json:"id" gorm:"primaryKey"`
-	ItemID     uint      `json:"item_id" gorm:"not null"`
-	EffectType int       `json:"effect_type" gorm:"not null"`
-	MinValue   int       `json:"min_value" gorm:"default:0"`
-	MaxValue   int       `json:"max_value" gorm:"default:0"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Item       ItemModel `json:"item" gorm:"foreignKey:ItemID"`
-}
-
-func (ItemEffectModel) TableName() string {
-	return "item_effects"
-}
+//// ItemEffectModel represents item effects/stats
+//type ItemEffectModel struct {
+//	ID         uint      `json:"id" gorm:"primaryKey"`
+//	ItemID     uint      `json:"item_id" gorm:"not null"`
+//	EffectType int       `json:"effect_type" gorm:"not null"`
+//	MinValue   int       `json:"min_value" gorm:"default:0"`
+//	MaxValue   int       `json:"max_value" gorm:"default:0"`
+//	CreatedAt  time.Time `json:"created_at"`
+//	UpdatedAt  time.Time `json:"updated_at"`
+//	Item       ItemModel `json:"item" gorm:"foreignKey:ItemID"`
+//}
+//
+//func (ItemEffectModel) TableName() string {
+//	return "item_effects"
+//}
 
 // ItemConditionModel represents item usage conditions
 type ItemConditionModel struct {
@@ -205,20 +204,28 @@ type StatTypeModel struct {
 	Code         string                     `json:"code"`                 // Internal key like "vitality", "wisdom"
 	CreatedAt    time.Time                  `json:"created_at"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
+	DisplayOrder int                        `json:"display_order"`
 	Translations []StatTypeTranslationModel `json:"translations" gorm:"foreignKey:StatTypeID"`
 }
 
+type ItemStat struct {
+	StatTypeId int    `json:"item_stat_id"`
+	ItemAnkaId int    `json:"item_anka_id"`
+	MinValue   int    `json:"min_value"`
+	MaxValue   int    `json:"max_value"`
+	Formula    string `json:"formula"`
+}
+
 type ItemStatModel struct {
-	ID           int           `json:"id" gorm:"primaryKey"`
-	ItemID       int           `json:"item_id"`      // Foreign key to items.anka_id
-	StatTypeID   int           `json:"stat_type_id"` // Foreign key to stat_types.id
-	StatType     StatTypeModel `json:"stat_type" gorm:"foreignKey:StatTypeId"`
-	MinValue     *int          `json:"min_value"`
-	MaxValue     *int          `json:"max_value"`
-	Formula      string        `json:"formula"`
-	DisplayOrder int           `json:"display_order"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	ID         int           `json:"id" gorm:"primaryKey"`
+	ItemID     int           `json:"item_id"`      // Foreign key to items.anka_id
+	StatTypeID int           `json:"stat_type_id"` // Foreign key to stat_types.id
+	StatType   StatTypeModel `json:"stat_type" gorm:"foreignKey:StatTypeId"`
+	MinValue   *int          `json:"min_value"`
+	MaxValue   *int          `json:"max_value"`
+	Formula    string        `json:"formula"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
 }
 
 type StatTypeTranslationModel struct {
