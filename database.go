@@ -100,8 +100,8 @@ func (ds *DatabaseService) initSchema() error {
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_items_type_anka_id ON items(type_anka_id)")
 	// Create index on anka_id, but allow multiple zeros for existing records
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_items_anka_id ON items(anka_id)")
-	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_item_id ON item_effects(item_id)")
-	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_type ON item_effects(effect_type)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_item_id ON item_stats(item_id)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_stats_type ON item_stats(stat_type_id)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_conditions_item_id ON item_conditions(item_id)")
 	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_item_set_translations_unique ON item_set_translations(item_set_id, language)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_recipes_item_id ON recipes(item_id)")
@@ -114,7 +114,6 @@ func (ds *DatabaseService) initSchema() error {
 // ClearAllData removes all existing item data from the database
 func (ds *DatabaseService) ClearAllData() error {
 	ds.db.Exec("DELETE FROM item_stats")
-	ds.db.Exec("DELETE FROM item_stat_types")
 	ds.db.Exec("DELETE FROM item_conditions")
 	ds.db.Exec("DELETE FROM item_translations")
 	ds.db.Exec("DELETE FROM ingredients")
@@ -135,12 +134,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 			tx.Rollback()
 		}
 	}()
-
-	// Clear existing data before inserting new data
-	if err := ds.ClearAllData(); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear existing data: %v", err)
-	}
 
 	// Step 1: Use French as master language to create items based on AnkaId
 	// Then add translations from other languages
@@ -840,61 +833,6 @@ func (ds *DatabaseService) LoadRecipeRecursive(item *ItemModel, language string,
 	return nil
 }
 
-//// GetItemWithFullRecipeTree retrieves an item by AnkaId with its complete recipe tree recursively loaded
-//func (ds *DatabaseService) GetItemWithFullRecipeTree(ankaId int, language string, maxDepth int) (*ItemModel, error) {
-//	if maxDepth <= 0 {
-//		maxDepth = 10 // Default max depth to prevent infinite loops
-//	}
-//
-//	// Load the base item with translations
-//	var item ItemModel
-//	err := ds.db.Preload("Translations", "language = ?", language).
-//		Preload("Type.Translations", "language = ?", language).
-//		Where("anka_id = ?", ankaId).
-//		First(&item).Error
-//
-//	if err != nil {
-//		if err == gorm.ErrRecordNotFound {
-//			return nil, nil
-//		}
-//		return nil, fmt.Errorf("failed to load item: %v", err)
-//	}
-//
-//	// Recursively load all recipes and ingredients
-//	if err := ds.LoadRecipeRecursive(&item, language, maxDepth, 0); err != nil {
-//		return nil, err
-//	}
-//
-//	return &item, nil
-//}
-
-// GetItemsWithRecipeTree retrieves multiple items with their complete recipe trees
-//func (ds *DatabaseService) GetItemsWithRecipeTree(ankaIds []int, language string, maxDepth int) ([]ItemModel, error) {
-//	if maxDepth <= 0 {
-//		maxDepth = 10
-//	}
-//
-//	var items []ItemModel
-//	err := ds.db.Preload("Translations", "language = ?", language).
-//		Preload("Type.Translations", "language = ?", language).
-//		Preload("Stats.StatType.Translations", "language = ?", language).
-//		Where("anka_id IN ?", ankaIds).
-//		Find(&items).Error
-//
-//	if err != nil {
-//		return nil, fmt.Errorf("failed to load items: %v", err)
-//	}
-//
-//	// Recursively load recipes for each item
-//	for i := range items {
-//		if err := ds.LoadRecipeRecursive(&items[i], language, maxDepth, 0); err != nil {
-//			return nil, err
-//		}
-//	}
-//
-//	return items, nil
-//}
-
 func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error {
 	if len(itemStatsMap) == 0 {
 		fmt.Println("No item stats to save")
@@ -979,17 +917,6 @@ func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error 
 func (ds *DatabaseService) SeedStatTypes() error {
 	fmt.Println("Seeding stat types...")
 
-	// Check if stat types already exist
-	var count int64
-	if err := ds.db.Model(&StatTypeModel{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("failed to count stat types: %v", err)
-	}
-
-	if count > 0 {
-		fmt.Printf("Found %d existing stat types, skipping seed\n", count)
-		return nil
-	}
-
 	// Begin transaction
 	tx := ds.db.Begin()
 	if tx.Error != nil {
@@ -1000,6 +927,18 @@ func (ds *DatabaseService) SeedStatTypes() error {
 			tx.Rollback()
 		}
 	}()
+
+	// Clear existing stat type translations first
+	if err := tx.Exec("DELETE FROM stat_type_translations").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear stat type translations: %v", err)
+	}
+
+	// Clear existing item stats
+	if err := tx.Exec("DELETE FROM stat_types").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear item stats: %v", err)
+	}
 
 	// Insert stat types with their hexadecimal IDs
 	for i, statType := range StatTypeSeedData {
