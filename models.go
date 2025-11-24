@@ -232,7 +232,7 @@ type ItemStatModel struct {
 	ID         int           `json:"id" gorm:"primaryKey"`
 	ItemID     int           `json:"item_id"`      // Foreign key to items.anka_id
 	StatTypeID int           `json:"stat_type_id"` // Foreign key to stat_types.id
-	StatType   StatTypeModel `json:"stat_type" gorm:"foreignKey:StatTypeId"`
+	StatType   StatTypeModel `json:"stat_type" gorm:"foreignKey:StatTypeID;references:ID"`
 	MinValue   *int          `json:"min_value"`
 	MaxValue   *int          `json:"max_value"`
 	Formula    string        `json:"formula"`
