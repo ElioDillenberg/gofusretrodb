@@ -252,24 +252,23 @@ type StatTypeTranslationModel struct {
 // StatTypeSeedData contains the reference data for stat types
 var StatTypeSeedData = []StatTypeModel{
 	// Characteristics
-	{ID: 0x64, Code: "vitality"},
-	{ID: 0x73, Code: "action_points"},
-	{ID: 0x76, Code: "wisdom"},
-	{ID: 0x77, Code: "strength"},
+	{ID: 0x64, Code: "chance"},
+	{ID: 0x73, Code: "critical_hit"},
+	{ID: 0x76, Code: "strength"},
+	{ID: 0x77, Code: "intelligence"},
 	{ID: 0x7b, Code: "agility"},
-	{ID: 0x7c, Code: "intelligence"},
-	{ID: 0x7d, Code: "chance"},
+	{ID: 0x7c, Code: "wisdom"},
+	{ID: 0x7d, Code: "vitality"},
 	{ID: 0x7f, Code: "pods"},
 	{ID: 0x80, Code: "prospecting"},
 
 	// Combat Stats
-	{ID: 0x60, Code: "damage"},
-	{ID: 0x62, Code: "damage_percent"},
-	{ID: 0x6e, Code: "critical_hit"},
+	{ID: 0x60, Code: "action_points"},
+	{ID: 0x62, Code: "heal"},
+	{ID: 0x6e, Code: "damage"},
 	{ID: 0x6f, Code: "initiative"},
-	{ID: 0x70, Code: "range"},
-	{ID: 0x75, Code: "summon"},
-	{ID: 0x99, Code: "range_bonus"},
+	{ID: 0x70, Code: "summon"},
+	{ID: 0x75, Code: "range"},
 
 	// Resistances
 	{ID: 0x98, Code: "neutral_resist"},
@@ -288,7 +287,7 @@ var StatTypeSeedData = []StatTypeModel{
 	{ID: 0xf4, Code: "air_damage"},
 
 	// Special Stats
-	{ID: 0x8a, Code: "heal"},
+	{ID: 0x8a, Code: "damage_percent"},
 	{ID: 0x8b, Code: "reflect_damage"},
 	{ID: 0x209, Code: "ap_reduction"},
 	{ID: 0x25b, Code: "trap_damage"},
