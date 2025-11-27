@@ -113,7 +113,6 @@ func (ds *DatabaseService) initSchema() error {
 
 // ClearAllData removes all existing item data from the database
 func (ds *DatabaseService) ClearAllData() error {
-	ds.db.Exec("DELETE FROM item_stats")
 	ds.db.Exec("DELETE FROM item_conditions")
 	ds.db.Exec("DELETE FROM item_translations")
 	ds.db.Exec("DELETE FROM ingredients")
@@ -927,6 +926,12 @@ func (ds *DatabaseService) SeedStatTypes() error {
 			tx.Rollback()
 		}
 	}()
+
+	// Clear existing item stats
+	if err := tx.Exec("DELETE FROM item_stats").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear item stats: %v", err)
+	}
 
 	// Clear existing stat type translations first
 	if err := tx.Exec("DELETE FROM stat_type_translations").Error; err != nil {
