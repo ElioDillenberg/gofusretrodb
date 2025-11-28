@@ -310,11 +310,11 @@ var StatTypeSeedData = []StatTypeModel{
 	//{ID: 0x65, Code: "mp_kick_resistance"},
 
 	// Special Stats
-	{ID: 0xdc, Code: "reflect_damage"}, // svg icon ok
-	{ID: 0xe1, Code: "trap_damage"},    // svg icon ok
-	{ID: 0xe2, Code: "trap_damage_percent"},
-	{ID: 0x86f, Code: "final_damage"},
-	{ID: 0x31b, Code: "hunting_weapon"},
+	{ID: 0xdc, Code: "reflect_damage", DisplayOrder: 38}, // svg icon ok
+	{ID: 0xe1, Code: "trap_damage", DisplayOrder: 39},    // svg icon ok
+	{ID: 0xe2, Code: "trap_damage_percent", DisplayOrder: 40},
+	{ID: 0x86f, Code: "final_damage", DisplayOrder: 41},
+	{ID: 0x31b, Code: "hunting_weapon", DisplayOrder: 42},
 }
 
 // StatTypeTranslations contains multilingual translations for stat types

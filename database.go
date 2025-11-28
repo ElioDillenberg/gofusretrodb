@@ -946,11 +946,11 @@ func (ds *DatabaseService) SeedStatTypes() error {
 	}
 
 	// Insert stat types with their hexadecimal IDs
-	for i, statType := range StatTypeSeedData {
+	for _, statType := range StatTypeSeedData {
 		statTypeModel := StatTypeModel{
 			ID:           statType.ID, // Use the hexadecimal ID directly
 			Code:         statType.Code,
-			DisplayOrder: i + 1,
+			DisplayOrder: statType.DisplayOrder,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
 		}
