@@ -223,8 +223,8 @@ type StatTypeModel struct {
 type ItemStat struct {
 	StatTypeId int    `json:"item_stat_id"`
 	ItemAnkaId int    `json:"item_anka_id"`
-	MinValue   int    `json:"min_value"`
-	MaxValue   int    `json:"max_value"`
+	MinValue   *int   `json:"min_value"`
+	MaxValue   *int   `json:"max_value"`
 	Formula    string `json:"formula"`
 }
 

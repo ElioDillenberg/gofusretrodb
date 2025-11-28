@@ -889,8 +889,8 @@ func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error 
 			itemStatModel := ItemStatModel{
 				ItemID:     int(itemPK),     // Use the PostgreSQL primary key
 				StatTypeID: stat.StatTypeId, // Use the hex code as the stat type ID
-				MinValue:   &stat.MinValue,
-				MaxValue:   &stat.MaxValue,
+				MinValue:   stat.MinValue,
+				MaxValue:   stat.MaxValue,
 				Formula:    stat.Formula,
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
