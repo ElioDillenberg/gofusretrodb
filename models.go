@@ -280,8 +280,8 @@ var StatTypeSeedData = []StatTypeModel{
 	{ID: 0xf4, Code: "neutral_resist", DisplayOrder: 34}, // svg icon ok
 	{ID: 0xf1, Code: "water_resist", DisplayOrder: 35},   // svg icon ok
 	{ID: 0xf3, Code: "fire_resist", DisplayOrder: 36},    // svg icon ok
-	{ID: 0xf2, Code: "earth_resist", DisplayOrder: 37},   // svg icon ok
-	{ID: 0xf0, Code: "air_resist", DisplayOrder: 38},     // svg icon ok
+	{ID: 0xf2, Code: "air_resist", DisplayOrder: 38},     // svg icon ok
+	{ID: 0xf0, Code: "earth_resist", DisplayOrder: 37},   // svg icon ok
 
 	// Resistances Percentage
 	{ID: 0xd6, Code: "neutral_resist_percent", DisplayOrder: 27}, // svg icon ok
