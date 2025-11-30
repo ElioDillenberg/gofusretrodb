@@ -89,22 +89,6 @@ func (ItemTypeTranslationModel) TableName() string {
 	return "item_type_translations"
 }
 
-//// ItemEffectModel represents item effects/stats
-//type ItemEffectModel struct {
-//	ID         uint      `json:"id" gorm:"primaryKey"`
-//	ItemID     uint      `json:"item_id" gorm:"not null"`
-//	EffectType int       `json:"effect_type" gorm:"not null"`
-//	MinValue   int       `json:"min_value" gorm:"default:0"`
-//	MaxValue   int       `json:"max_value" gorm:"default:0"`
-//	CreatedAt  time.Time `json:"created_at"`
-//	UpdatedAt  time.Time `json:"updated_at"`
-//	Item       ItemModel `json:"item" gorm:"foreignKey:ItemID"`
-//}
-//
-//func (ItemEffectModel) TableName() string {
-//	return "item_effects"
-//}
-
 // ItemConditionModel represents item usage conditions
 type ItemConditionModel struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
@@ -230,7 +214,7 @@ type ItemStat struct {
 
 type ItemStatModel struct {
 	ID         int           `json:"id" gorm:"primaryKey"`
-	ItemID     int           `json:"item_id"`      // Foreign key to items.anka_id
+	ItemID     uint          `json:"item_id"`      // Foreign key to items.id (primary key)
 	StatTypeID int           `json:"stat_type_id"` // Foreign key to stat_types.id
 	StatType   StatTypeModel `json:"stat_type" gorm:"foreignKey:StatTypeID;references:ID"`
 	MinValue   *int          `json:"min_value"`
