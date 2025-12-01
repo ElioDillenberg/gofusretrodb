@@ -133,6 +133,14 @@ func (ItemSetTranslationModel) TableName() string {
 	return "item_set_translations"
 }
 
+func (StatTypeCategoryModel) TableName() string {
+	return "stat_type_categories"
+}
+
+func (StatTypeCategoryTranslationModel) TableName() string {
+	return "stat_type_category_translations"
+}
+
 func (StatTypeModel) TableName() string {
 	return "stat_types"
 }
@@ -195,9 +203,32 @@ type ItemTypeDefinition struct {
 	Category int    `json:"category"`
 }
 
+// StatTypeCategoryModel represents a category grouping for stat types
+type StatTypeCategoryModel struct {
+	ID           int                                `json:"id" gorm:"primaryKey"`
+	Code         string                             `json:"code" gorm:"size:50;uniqueIndex;not null"` // e.g., "main", "resistance", "resistance_percentage", "misc"
+	DisplayOrder int                                `json:"display_order"`
+	CreatedAt    time.Time                          `json:"created_at"`
+	UpdatedAt    time.Time                          `json:"updated_at"`
+	Translations []StatTypeCategoryTranslationModel `json:"translations" gorm:"foreignKey:CategoryID"`
+}
+
+// StatTypeCategoryTranslationModel represents translations for stat type categories
+type StatTypeCategoryTranslationModel struct {
+	ID         int                   `json:"id" gorm:"primaryKey"`
+	CategoryID int                   `json:"category_id" gorm:"not null"`
+	Language   string                `json:"language" gorm:"size:5;not null"`
+	Name       string                `json:"name" gorm:"size:255;not null"`
+	CreatedAt  time.Time             `json:"created_at"`
+	UpdatedAt  time.Time             `json:"updated_at"`
+	Category   StatTypeCategoryModel `json:"category" gorm:"foreignKey:CategoryID"`
+}
+
 type StatTypeModel struct {
 	ID           int                        `json:"id" gorm:"primaryKey"` // The hex code as integer (e.g., 100 for 0x64)
 	Code         string                     `json:"code"`                 // Internal key like "vitality", "wisdom"
+	CategoryID   int                        `json:"category_id"`          // Foreign key to stat_type_categories.id
+	Category     *StatTypeCategoryModel     `json:"category,omitempty" gorm:"foreignKey:CategoryID;references:ID"`
 	CreatedAt    time.Time                  `json:"created_at"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
 	DisplayOrder int                        `json:"display_order"`
@@ -233,71 +264,91 @@ type StatTypeTranslationModel struct {
 	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }
 
+// StatTypeCategorySeedData contains the reference data for stat type categories
+var StatTypeCategorySeedData = []StatTypeCategoryModel{
+	{ID: 1, Code: "main", DisplayOrder: 1},
+	{ID: 2, Code: "resistance", DisplayOrder: 2},
+	{ID: 3, Code: "resistance_percentage", DisplayOrder: 3},
+	{ID: 4, Code: "misc", DisplayOrder: 4},
+	{ID: 5, Code: "weapon", DisplayOrder: 5},
+	{ID: 6, Code: "combat", DisplayOrder: 6},
+}
+
+// StatTypeCategoryTranslations contains multilingual translations for stat type categories
+var StatTypeCategoryTranslations = map[string]map[string]string{
+	"main":                  {"fr": "Caractéristiques", "en": "Main Stats", "es": "Características"},
+	"resistance":            {"fr": "Résistances", "en": "Resistances", "es": "Resistencias"},
+	"resistance_percentage": {"fr": "Résistances (%)", "en": "Resistances (%)", "es": "Resistencias (%)"},
+	"misc":                  {"fr": "Divers", "en": "Miscellaneous", "es": "Varios"},
+	"weapon":                {"fr": "Arme", "en": "Weapon", "es": "Arma"},
+	"combat":                {"fr": "Combat", "en": "Combat", "es": "Combate"},
+}
+
 // StatTypeSeedData contains the reference data for stat types
 var StatTypeSeedData = []StatTypeModel{
-	// Characteristics
-	{ID: 0x7d, Code: "vitality", DisplayOrder: 17},     // svg icon ok
-	{ID: 0x7b, Code: "chance", DisplayOrder: 18},       // svg icon ok
-	{ID: 0x7e, Code: "intelligence", DisplayOrder: 19}, // svg icon ok
-	{ID: 0x76, Code: "strength", DisplayOrder: 20},     // svg icon ok
-	{ID: 0x77, Code: "agility", DisplayOrder: 21},      // svg icon ok
-	{ID: 0x7c, Code: "wisdom", DisplayOrder: 23},       // svg icon ok
+	// Characteristics (main category)
+	{ID: 0x7d, Code: "vitality", CategoryID: 1, DisplayOrder: 17},     // svg icon ok
+	{ID: 0x7b, Code: "chance", CategoryID: 1, DisplayOrder: 18},       // svg icon ok
+	{ID: 0x7e, Code: "intelligence", CategoryID: 1, DisplayOrder: 19}, // svg icon ok
+	{ID: 0x76, Code: "strength", CategoryID: 1, DisplayOrder: 20},     // svg icon ok
+	{ID: 0x77, Code: "agility", CategoryID: 1, DisplayOrder: 21},      // svg icon ok
+	{ID: 0x7c, Code: "wisdom", CategoryID: 1, DisplayOrder: 23},       // svg icon ok
 
-	// Combat Stats
-	{ID: 0xb6, Code: "summon", DisplayOrder: 33},         // svg icon ok
-	{ID: 0x80, Code: "mp", DisplayOrder: 14},             // svg icon ok
-	{ID: 0x6f, Code: "ap", DisplayOrder: 13},             // svg icon ok
-	{ID: 0x70, Code: "damage", DisplayOrder: 25},         // svg icon ok
-	{ID: 0x8a, Code: "damage_percent", DisplayOrder: 22}, // svg icon ok
-	{ID: 0x73, Code: "critical_hit", DisplayOrder: 26},   // svg icon ok
-	{ID: 0x75, Code: "range", DisplayOrder: 15},          // svg icon ok
-	{ID: 0xb2, Code: "heal", DisplayOrder: 32},           // svg icon ok
+	// Combat Stats (combat category)
+	{ID: 0xb6, Code: "summon", CategoryID: 6, DisplayOrder: 33},         // svg icon ok
+	{ID: 0x80, Code: "mp", CategoryID: 6, DisplayOrder: 14},             // svg icon ok
+	{ID: 0x6f, Code: "ap", CategoryID: 6, DisplayOrder: 13},             // svg icon ok
+	{ID: 0x70, Code: "damage", CategoryID: 6, DisplayOrder: 25},         // svg icon ok
+	{ID: 0x8a, Code: "damage_percent", CategoryID: 6, DisplayOrder: 22}, // svg icon ok
+	{ID: 0x73, Code: "critical_hit", CategoryID: 6, DisplayOrder: 26},   // svg icon ok
+	{ID: 0x75, Code: "range", CategoryID: 6, DisplayOrder: 15},          // svg icon ok
+	{ID: 0xb2, Code: "heal", CategoryID: 6, DisplayOrder: 32},           // svg icon ok
 	//{ID: 0x73, Code: "critical_miss"},   // svg icon ok
 
-	// Misc
-	{ID: 0x9e, Code: "pods", DisplayOrder: 0},
-	{ID: 0xae, Code: "initiative", DisplayOrder: 16},  // svg icon ok
-	{ID: 0xb0, Code: "prospecting", DisplayOrder: 24}, // svg icon ok
+	// Misc (misc category)
+	{ID: 0x9e, Code: "pods", CategoryID: 4, DisplayOrder: 0},
+	{ID: 0xae, Code: "initiative", CategoryID: 4, DisplayOrder: 16},  // svg icon ok
+	{ID: 0xb0, Code: "prospecting", CategoryID: 4, DisplayOrder: 24}, // svg icon ok
 
-	// Resistances
-	{ID: 0xf4, Code: "neutral_resist", DisplayOrder: 34}, // svg icon ok
-	{ID: 0xf1, Code: "water_resist", DisplayOrder: 35},   // svg icon ok
-	{ID: 0xf3, Code: "fire_resist", DisplayOrder: 36},    // svg icon ok
-	{ID: 0xf2, Code: "air_resist", DisplayOrder: 38},     // svg icon ok
-	{ID: 0xf0, Code: "earth_resist", DisplayOrder: 37},   // svg icon ok
+	// Resistances (resistance category)
+	{ID: 0xf4, Code: "neutral_resist", CategoryID: 2, DisplayOrder: 34}, // svg icon ok
+	{ID: 0xf1, Code: "water_resist", CategoryID: 2, DisplayOrder: 35},   // svg icon ok
+	{ID: 0xf3, Code: "fire_resist", CategoryID: 2, DisplayOrder: 36},    // svg icon ok
+	{ID: 0xf2, Code: "air_resist", CategoryID: 2, DisplayOrder: 38},     // svg icon ok
+	{ID: 0xf0, Code: "earth_resist", CategoryID: 2, DisplayOrder: 37},   // svg icon ok
 
-	// Resistances Percentage
-	{ID: 0xd6, Code: "neutral_resist_percent", DisplayOrder: 27}, // svg icon ok
-	{ID: 0xd3, Code: "water_resist_percent", DisplayOrder: 28},   // svg icon ok
-	{ID: 0xd5, Code: "fire_resist_percent", DisplayOrder: 29},    // svg icon ok
-	{ID: 0xd2, Code: "earth_resist_percent", DisplayOrder: 30},   // svg icon ok
-	{ID: 0xd4, Code: "air_resist_percent", DisplayOrder: 31},     // svg icon ok
+	// Resistances Percentage (resistance_percentage category)
+	{ID: 0xd6, Code: "neutral_resist_percent", CategoryID: 3, DisplayOrder: 27}, // svg icon ok
+	{ID: 0xd3, Code: "water_resist_percent", CategoryID: 3, DisplayOrder: 28},   // svg icon ok
+	{ID: 0xd5, Code: "fire_resist_percent", CategoryID: 3, DisplayOrder: 29},    // svg icon ok
+	{ID: 0xd2, Code: "earth_resist_percent", CategoryID: 3, DisplayOrder: 30},   // svg icon ok
+	{ID: 0xd4, Code: "air_resist_percent", CategoryID: 3, DisplayOrder: 31},     // svg icon ok
 
-	// Weapon damage
-	{ID: 0x64, Code: "neutral_damage", DisplayOrder: 1}, // svg icon ok
-	{ID: 0x61, Code: "water_damage", DisplayOrder: 2},   // svg icon ok
-	{ID: 0x63, Code: "fire_damage", DisplayOrder: 3},    // svg icon ok
-	{ID: 0x60, Code: "earth_damage", DisplayOrder: 4},   // svg icon ok
-	{ID: 0x62, Code: "air_damage", DisplayOrder: 5},     // svg icon ok
+	// Weapon damage (weapon category)
+	{ID: 0x64, Code: "neutral_damage", CategoryID: 5, DisplayOrder: 1}, // svg icon ok
+	{ID: 0x61, Code: "water_damage", CategoryID: 5, DisplayOrder: 2},   // svg icon ok
+	{ID: 0x63, Code: "fire_damage", CategoryID: 5, DisplayOrder: 3},    // svg icon ok
+	{ID: 0x60, Code: "earth_damage", CategoryID: 5, DisplayOrder: 4},   // svg icon ok
+	{ID: 0x62, Code: "air_damage", CategoryID: 5, DisplayOrder: 5},     // svg icon ok
 
-	{ID: 0x5f, Code: "neutral_life_steal", DisplayOrder: 6}, // svg icon ok
-	{ID: 0x5b, Code: "water_life_steal", DisplayOrder: 7},   // svg icon ok
-	{ID: 0x5e, Code: "fire_life_steal", DisplayOrder: 8},    // svg icon ok
-	{ID: 0x5c, Code: "earth_life_steal", DisplayOrder: 9},   // svg icon ok
-	{ID: 0x5d, Code: "air_life_steal", DisplayOrder: 10},    // svg icon ok
+	{ID: 0x5f, Code: "neutral_life_steal", CategoryID: 5, DisplayOrder: 6}, // svg icon ok
+	{ID: 0x5b, Code: "water_life_steal", CategoryID: 5, DisplayOrder: 7},   // svg icon ok
+	{ID: 0x5e, Code: "fire_life_steal", CategoryID: 5, DisplayOrder: 8},    // svg icon ok
+	{ID: 0x5c, Code: "earth_life_steal", CategoryID: 5, DisplayOrder: 9},   // svg icon ok
+	{ID: 0x5d, Code: "air_life_steal", CategoryID: 5, DisplayOrder: 10},    // svg icon ok
 
-	{ID: 0x82, Code: "gold_steal", DisplayOrder: 12},
-	{ID: 0x65, Code: "ap_kick", DisplayOrder: 11},
+	{ID: 0x82, Code: "gold_steal", CategoryID: 5, DisplayOrder: 12},
+	{ID: 0x65, Code: "ap_kick", CategoryID: 5, DisplayOrder: 11},
 
 	//{ID: 0x65, Code: "ap_kick_resistance"},
 	//{ID: 0x65, Code: "mp_kick_resistance"},
 
-	// Special Stats
-	{ID: 0xdc, Code: "reflect_damage", DisplayOrder: 38}, // svg icon ok
-	{ID: 0xe1, Code: "trap_damage", DisplayOrder: 39},    // svg icon ok
-	{ID: 0xe2, Code: "trap_damage_percent", DisplayOrder: 40},
-	{ID: 0x86f, Code: "final_damage", DisplayOrder: 41},
-	{ID: 0x31b, Code: "hunting_weapon", DisplayOrder: 42},
+	// Special Stats (combat category)
+	{ID: 0xdc, Code: "reflect_damage", CategoryID: 6, DisplayOrder: 38}, // svg icon ok
+	{ID: 0xe1, Code: "trap_damage", CategoryID: 6, DisplayOrder: 39},    // svg icon ok
+	{ID: 0xe2, Code: "trap_damage_percent", CategoryID: 6, DisplayOrder: 40},
+	{ID: 0x86f, Code: "final_damage", CategoryID: 6, DisplayOrder: 41},
+	{ID: 0x31b, Code: "hunting_weapon", CategoryID: 6, DisplayOrder: 42},
 }
 
 // StatTypeTranslations contains multilingual translations for stat types

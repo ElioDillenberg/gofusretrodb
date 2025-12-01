@@ -79,6 +79,8 @@ func (ds *DatabaseService) initSchema() error {
 		&ItemModel{},
 		&ItemTranslationModel{},
 		&ItemStatModel{},
+		&StatTypeCategoryModel{},
+		&StatTypeCategoryTranslationModel{},
 		&StatTypeModel{},
 		&StatTypeTranslationModel{},
 		&ItemConditionModel{},
@@ -978,11 +980,12 @@ func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error 
 	return nil
 }
 
-// GetStatTypes retrieves all stat types with their translations
+// GetStatTypes retrieves all stat types with their translations and categories
 func (ds *DatabaseService) GetStatTypes(language string) ([]StatTypeModel, error) {
 	var statTypes []StatTypeModel
 	err := ds.db.
 		Preload("Translations", "language = ?", language).
+		Preload("Category.Translations", "language = ?", language).
 		Order("display_order ASC").
 		Find(&statTypes).Error
 	if err != nil {
@@ -991,8 +994,21 @@ func (ds *DatabaseService) GetStatTypes(language string) ([]StatTypeModel, error
 	return statTypes, nil
 }
 
+// GetStatTypeCategories retrieves all stat type categories with their translations
+func (ds *DatabaseService) GetStatTypeCategories(language string) ([]StatTypeCategoryModel, error) {
+	var categories []StatTypeCategoryModel
+	err := ds.db.
+		Preload("Translations", "language = ?", language).
+		Order("display_order ASC").
+		Find(&categories).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stat type categories: %v", err)
+	}
+	return categories, nil
+}
+
 func (ds *DatabaseService) SeedStatTypes() error {
-	fmt.Println("Seeding stat types...")
+	fmt.Println("Seeding stat type categories and stat types...")
 
 	// Begin transaction
 	tx := ds.db.Begin()
@@ -1017,17 +1033,66 @@ func (ds *DatabaseService) SeedStatTypes() error {
 		return fmt.Errorf("failed to clear stat type translations: %v", err)
 	}
 
-	// Clear existing item stats
+	// Clear existing stat types
 	if err := tx.Exec("DELETE FROM stat_types").Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to clear item stats: %v", err)
+		return fmt.Errorf("failed to clear stat types: %v", err)
 	}
+
+	// Clear existing stat type category translations
+	if err := tx.Exec("DELETE FROM stat_type_category_translations").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear stat type category translations: %v", err)
+	}
+
+	// Clear existing stat type categories
+	if err := tx.Exec("DELETE FROM stat_type_categories").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear stat type categories: %v", err)
+	}
+
+	// Seed stat type categories first
+	for _, category := range StatTypeCategorySeedData {
+		categoryModel := StatTypeCategoryModel{
+			ID:           category.ID,
+			Code:         category.Code,
+			DisplayOrder: category.DisplayOrder,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		if err := tx.Create(&categoryModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to insert stat type category %s: %v", category.Code, err)
+		}
+
+		// Insert translations for this category
+		if translations, exists := StatTypeCategoryTranslations[category.Code]; exists {
+			for language, name := range translations {
+				translation := StatTypeCategoryTranslationModel{
+					CategoryID: category.ID,
+					Language:   language,
+					Name:       name,
+					CreatedAt:  time.Now(),
+					UpdatedAt:  time.Now(),
+				}
+
+				if err := tx.Create(&translation).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to insert translation for category %s (%s): %v", category.Code, language, err)
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Successfully seeded %d stat type categories\n", len(StatTypeCategorySeedData))
 
 	// Insert stat types with their hexadecimal IDs
 	for _, statType := range StatTypeSeedData {
 		statTypeModel := StatTypeModel{
 			ID:           statType.ID, // Use the hexadecimal ID directly
 			Code:         statType.Code,
+			CategoryID:   statType.CategoryID,
 			DisplayOrder: statType.DisplayOrder,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
