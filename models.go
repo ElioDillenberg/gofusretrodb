@@ -235,7 +235,6 @@ type StatTypeTranslationModel struct {
 
 // StatTypeSeedData contains the reference data for stat types
 var StatTypeSeedData = []StatTypeModel{
-
 	// Characteristics
 	{ID: 0x7d, Code: "vitality", DisplayOrder: 17},     // svg icon ok
 	{ID: 0x7b, Code: "chance", DisplayOrder: 18},       // svg icon ok
@@ -329,11 +328,11 @@ var StatTypeTranslations = map[string]map[string]string{
 	"fire_resist_percent":    {"fr": "Résistance Feu (%)", "en": "Fire Resistance (%)", "es": "Resistencia Fuego (%)"},
 	"water_resist_percent":   {"fr": "Résistance Eau (%)", "en": "Water Resistance (%)", "es": "Resistencia Agua (%)"},
 	"air_resist_percent":     {"fr": "Résistance Air (%)", "en": "Air Resistance (%)", "es": "Resistencia Aire (%)"},
-	"neutral_damage":         {"fr": "Dommages Neutre", "en": "Neutral Damage", "es": "Daño Neutral"},
-	"earth_damage":           {"fr": "Dommages Terre", "en": "Earth Damage", "es": "Daño Tierra"},
-	"fire_damage":            {"fr": "Dommages Feu", "en": "Fire Damage", "es": "Daño Fuego"},
-	"water_damage":           {"fr": "Dommages Eau", "en": "Water Damage", "es": "Daño Agua"},
-	"air_damage":             {"fr": "Dommages Air", "en": "Air Damage", "es": "Daño Aire"},
+	"neutral_damage":         {"fr": "Dégats Neutre", "en": "Neutral Damage", "es": "Daño Neutral"},
+	"earth_damage":           {"fr": "Dégats Terre", "en": "Earth Damage", "es": "Daño Tierra"},
+	"fire_damage":            {"fr": "Dégats Feu", "en": "Fire Damage", "es": "Daño Fuego"},
+	"water_damage":           {"fr": "Dégats Eau", "en": "Water Damage", "es": "Daño Agua"},
+	"air_damage":             {"fr": "Dégats Air", "en": "Air Damage", "es": "Daño Aire"},
 	"neutral_life_steal":     {"fr": "Vol de vie Neutre", "en": "Neutral life steal", "es": "Robo de vida Neutral"},
 	"earth_life_steal":       {"fr": "Vol de vie Terre", "en": "Earth life steal", "es": "Robo de vida Tierra"},
 	"fire_life_steal":        {"fr": "Vol de vie Feu", "en": "Fire life steal", "es": "Robo de vida Fuego"},
