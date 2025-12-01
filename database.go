@@ -341,14 +341,39 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 //	return items, nil
 //}
 
+// ItemSearchFilters contains all filter options for item search
+type ItemSearchFilters struct {
+	SearchValue string
+	Language    string
+	TypeAnkaIDs []int
+	StatTypeIDs []int
+	MinLevel    *int
+	MaxLevel    *int
+	LevelOrder  string // "asc", "desc", or empty for default
+	Limit       int
+	Offset      int
+}
+
 // GetItemsSearchPaginated retrieves items with pagination and priority sorting at the database level
 func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string, typeAnkaIDs []int, limit, offset int) (items []ItemModel, totalCount int, err error) {
-	trimmedSearch := strings.TrimSpace(searchValue)
+	filters := ItemSearchFilters{
+		SearchValue: searchValue,
+		Language:    language,
+		TypeAnkaIDs: typeAnkaIDs,
+		Limit:       limit,
+		Offset:      offset,
+	}
+	return ds.GetItemsSearchPaginatedWithFilters(filters)
+}
+
+// GetItemsSearchPaginatedWithFilters retrieves items with comprehensive filtering options
+func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearchFilters) (items []ItemModel, totalCount int, err error) {
+	trimmedSearch := strings.TrimSpace(filters.SearchValue)
 
 	// Build the base query
 	baseQuery := ds.db.Table("items").
 		Joins("JOIN item_translations it ON items.id = it.item_id").
-		Where("it.language = ?", language)
+		Where("it.language = ?", filters.Language)
 
 	// Add search filter if provided
 	if trimmedSearch != "" {
@@ -356,8 +381,25 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 	}
 
 	// Add type filter if provided
-	if len(typeAnkaIDs) > 0 {
-		baseQuery = baseQuery.Where("items.type_anka_id IN ?", typeAnkaIDs)
+	if len(filters.TypeAnkaIDs) > 0 {
+		baseQuery = baseQuery.Where("items.type_anka_id IN ?", filters.TypeAnkaIDs)
+	}
+
+	// Add level filters if provided
+	if filters.MinLevel != nil {
+		baseQuery = baseQuery.Where("items.level >= ?", *filters.MinLevel)
+	}
+	if filters.MaxLevel != nil {
+		baseQuery = baseQuery.Where("items.level <= ?", *filters.MaxLevel)
+	}
+
+	// Add stat filter if provided
+	if len(filters.StatTypeIDs) > 0 {
+		// Join with item_stats to filter items that have at least one of the specified stats
+		baseQuery = baseQuery.
+			Joins("JOIN item_stats ist ON items.id = ist.item_id").
+			Where("ist.stat_type_id IN ?", filters.StatTypeIDs).
+			Group("items.id")
 	}
 
 	// Get total count
@@ -370,11 +412,11 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 
 	// Build the main query with priority sorting
 	query := ds.db.
-		Preload("Translations", "language = ?", language).
-		Preload("Type.Translations", "language = ?", language).
-		Preload("Stats.StatType.Translations", "language = ?", language).
+		Preload("Translations", "language = ?", filters.Language).
+		Preload("Type.Translations", "language = ?", filters.Language).
+		Preload("Stats.StatType.Translations", "language = ?", filters.Language).
 		Joins("JOIN item_translations it ON items.id = it.item_id").
-		Where("it.language = ?", language)
+		Where("it.language = ?", filters.Language)
 
 	// Add search filter if provided
 	if trimmedSearch != "" {
@@ -388,14 +430,40 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 	}
 
 	// Add type filter if provided
-	if len(typeAnkaIDs) > 0 {
-		query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
+	if len(filters.TypeAnkaIDs) > 0 {
+		query = query.Where("items.type_anka_id IN ?", filters.TypeAnkaIDs)
+	}
+
+	// Add level filters if provided
+	if filters.MinLevel != nil {
+		query = query.Where("items.level >= ?", *filters.MinLevel)
+	}
+	if filters.MaxLevel != nil {
+		query = query.Where("items.level <= ?", *filters.MaxLevel)
+	}
+
+	// Add stat filter if provided
+	if len(filters.StatTypeIDs) > 0 {
+		// Use a subquery to filter items that have at least one of the specified stats
+		query = query.Where("items.id IN (?)",
+			ds.db.Table("item_stats").
+				Select("item_id").
+				Where("stat_type_id IN ?", filters.StatTypeIDs).
+				Group("item_id"),
+		)
+	}
+
+	// Apply level ordering if specified
+	if filters.LevelOrder == "asc" {
+		query = query.Order("items.level ASC")
+	} else if filters.LevelOrder == "desc" {
+		query = query.Order("items.level DESC")
 	}
 
 	// Add secondary sorting by name and apply pagination
 	query = query.Order("it.name ASC").
-		Limit(limit).
-		Offset(offset).
+		Limit(filters.Limit).
+		Offset(filters.Offset).
 		Find(&items)
 
 	if query.Error != nil {
@@ -404,7 +472,7 @@ func (ds *DatabaseService) GetItemsSearchPaginated(searchValue, language string,
 
 	// Recursively load full recipe trees for all items (max depth 10)
 	for i := range items {
-		if err := ds.LoadRecipeRecursive(&items[i], language, 3, 0); err != nil {
+		if err := ds.LoadRecipeRecursive(&items[i], filters.Language, 3, 0); err != nil {
 			return nil, 0, fmt.Errorf("failed to load recipe tree for item %d: %v", items[i].ID, err)
 		}
 	}
@@ -908,6 +976,19 @@ func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error 
 
 	fmt.Printf("Successfully saved %d item stats (skipped %d items not in DB, %d unknown stat types)\n", totalStats, skippedItems, skippedStats)
 	return nil
+}
+
+// GetStatTypes retrieves all stat types with their translations
+func (ds *DatabaseService) GetStatTypes(language string) ([]StatTypeModel, error) {
+	var statTypes []StatTypeModel
+	err := ds.db.
+		Preload("Translations", "language = ?", language).
+		Order("display_order ASC").
+		Find(&statTypes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stat types: %v", err)
+	}
+	return statTypes, nil
 }
 
 func (ds *DatabaseService) SeedStatTypes() error {
