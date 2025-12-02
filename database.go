@@ -397,11 +397,12 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 
 	// Add stat filter if provided
 	if len(filters.StatTypeIDs) > 0 {
-		// Join with item_stats to filter items that have at least one of the specified stats
+		// Join with item_stats to filter items that have all of the specified stats
 		baseQuery = baseQuery.
 			Joins("JOIN item_stats ist ON items.id = ist.item_id").
 			Where("ist.stat_type_id IN ?", filters.StatTypeIDs).
-			Group("items.id")
+			Group("items.id").
+			Having("COUNT(DISTINCT ist.stat_type_id) = ?", len(filters.StatTypeIDs))
 	}
 
 	// Get total count
@@ -446,12 +447,13 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 
 	// Add stat filter if provided
 	if len(filters.StatTypeIDs) > 0 {
-		// Use a subquery to filter items that have at least one of the specified stats
+		// Use a subquery to filter items that have all of the specified stats
 		query = query.Where("items.id IN (?)",
 			ds.db.Table("item_stats").
 				Select("item_id").
 				Where("stat_type_id IN ?", filters.StatTypeIDs).
-				Group("item_id"),
+				Group("item_id").
+				Having("COUNT(DISTINCT stat_type_id) = ?", len(filters.StatTypeIDs)),
 		)
 	}
 

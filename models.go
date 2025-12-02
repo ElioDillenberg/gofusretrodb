@@ -326,9 +326,9 @@ var StatTypeSeedData = []StatTypeModel{
 
 	// Weapon damage (weapon category)
 	{ID: 0x64, Code: "neutral_damage", CategoryID: 5, DisplayOrder: 1}, // svg icon ok
-	{ID: 0x61, Code: "water_damage", CategoryID: 5, DisplayOrder: 2},   // svg icon ok
+	{ID: 0x60, Code: "water_damage", CategoryID: 5, DisplayOrder: 2},   // svg icon ok
 	{ID: 0x63, Code: "fire_damage", CategoryID: 5, DisplayOrder: 3},    // svg icon ok
-	{ID: 0x60, Code: "earth_damage", CategoryID: 5, DisplayOrder: 4},   // svg icon ok
+	{ID: 0x61, Code: "earth_damage", CategoryID: 5, DisplayOrder: 4},   // svg icon ok
 	{ID: 0x62, Code: "air_damage", CategoryID: 5, DisplayOrder: 5},     // svg icon ok
 
 	{ID: 0x5f, Code: "neutral_life_steal", CategoryID: 5, DisplayOrder: 6}, // svg icon ok
