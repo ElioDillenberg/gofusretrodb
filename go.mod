@@ -1,4 +1,4 @@
-module github.com/ElioDillenberg/gofusretrodb
+module github.com/eliodillenberg/gofusretrodb
 
 go 1.25.1
 
