@@ -348,7 +348,7 @@ var StatTypeSeedData = []StatTypeModel{
 	{ID: 0xe1, Code: "trap_damage", CategoryID: 6, DisplayOrder: 39},    // svg icon ok
 	{ID: 0xe2, Code: "trap_damage_percent", CategoryID: 6, DisplayOrder: 40},
 	{ID: 0x86f, Code: "final_damage", CategoryID: 6, DisplayOrder: 41},
-	{ID: 0x31b, Code: "hunting_weapon", CategoryID: 6, DisplayOrder: 42},
+	{ID: 0x31b, Code: "hunting_weapon", CategoryID: 5, DisplayOrder: 42},
 }
 
 // StatTypeTranslations contains multilingual translations for stat types
