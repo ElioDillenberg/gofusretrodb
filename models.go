@@ -233,6 +233,7 @@ type StatTypeModel struct {
 	UpdatedAt    time.Time                  `json:"updated_at"`
 	DisplayOrder int                        `json:"display_order"`
 	Translations []StatTypeTranslationModel `json:"translations" gorm:"foreignKey:StatTypeID"`
+	Runes        []RuneModel                `json:"runes,omitempty" gorm:"foreignKey:StatTypeID;references:ID"` // Associated runes for this stat type
 }
 
 type ItemStat struct {
@@ -397,4 +398,266 @@ var StatTypeTranslations = map[string]map[string]string{
 	"damage":                 {"fr": "Dommages", "en": "Damage", "es": "Daño"},
 	"damage_percent":         {"fr": "Dommages (%)", "en": "Damage (%)", "es": "Daño (%)"},
 	"final_damage":           {"fr": "Dommages finaux", "en": "Final damage", "es": "Daño final"},
+}
+
+// RuneModel represents a forgemagie rune that can be obtained by breaking items
+type RuneModel struct {
+	ID         int            `json:"id" gorm:"primaryKey"`
+	Code       string         `json:"code" gorm:"size:50;not null"` // e.g., "fo", "pa_fo", "ra_fo", "ga_pa"
+	StatTypeID int            `json:"stat_type_id"`                 // References stat_types.id (e.g., strength)
+	StatType   *StatTypeModel `json:"stat_type,omitempty" gorm:"foreignKey:StatTypeID;references:ID"`
+	Tier       string         `json:"tier" gorm:"size:10;not null"` // "ba", "pa", "ra", or "single" for AP/MP/Range
+	Weight     float64        `json:"weight" gorm:"not null"`       // The "poids" value used in calculations
+	PowerValue int            `json:"power_value" gorm:"not null"`  // How much stat the rune adds (1 for ba, 3 for pa, 10 for ra)
+	ItemAnkaID int            `json:"item_anka_id" gorm:"index"`    // The game's AnkaID for seeding - used to resolve ItemID
+	ItemID     *uint          `json:"item_id" gorm:"index"`         // References items.id (the physical rune item)
+	Item       *ItemModel     `json:"item,omitempty" gorm:"foreignKey:ItemID;references:ID"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+}
+
+func (RuneModel) TableName() string {
+	return "runes"
+}
+
+// RuneTier constants
+const (
+	RuneTierBa     = "ba"     // Base rune (e.g., Fo)
+	RuneTierPa     = "pa"     // Pa rune (e.g., Pa Fo)
+	RuneTierRa     = "ra"     // Ra rune (e.g., Ra Fo)
+	RuneTierSingle = "single" // Single tier runes (Ga Pa, Ga Pme, Po)
+)
+
+// Rune weights (poids) - used in drop chance calculations
+const (
+	RuneWeightGaPa         = 100.0 // AP rune
+	RuneWeightGaPme        = 90.0  // MP rune
+	RuneWeightPo           = 51.0  // Range rune
+	RuneWeightCriInvoDoRen = 30.0  // Critical/Summon/Reflect damage
+	RuneWeightDoSo         = 20.0  // Damage/Heals
+	RuneWeightDoPer        = 2.0
+	RuneWeightSaProspec    = 3.0 // Wisdom/Prospecting
+	RuneWeightRePer        = 4.0
+	RuneWeightRe           = 5.0
+	RuneWeightDoPi         = 15.0
+	RuneWeightStat         = 1.0 // Main stats (Fo, Ine, Cha, Age)
+)
+
+// RuneSeedData contains the reference data for runes
+// ItemAnkaID will be set to 0 initially and updated when you provide the actual item IDs
+var RuneSeedData = []RuneModel{
+	// === MAIN STATS (Weight = 1) ===
+	// Strength (Force) runes
+	{ID: 1, Code: "fo", StatTypeID: 0x76, Tier: RuneTierBa, Weight: RuneWeightStat, PowerValue: 1, ItemAnkaID: 1519},
+	{ID: 2, Code: "pa_fo", StatTypeID: 0x76, Tier: RuneTierPa, Weight: RuneWeightStat, PowerValue: 3, ItemAnkaID: 1545},
+	{ID: 3, Code: "ra_fo", StatTypeID: 0x76, Tier: RuneTierRa, Weight: RuneWeightStat, PowerValue: 10, ItemAnkaID: 1551},
+
+	// Intelligence runes
+	{ID: 4, Code: "ine", StatTypeID: 0x7e, Tier: RuneTierBa, Weight: RuneWeightStat, PowerValue: 1, ItemAnkaID: 1522},
+	{ID: 5, Code: "pa_ine", StatTypeID: 0x7e, Tier: RuneTierPa, Weight: RuneWeightStat, PowerValue: 3, ItemAnkaID: 1547},
+	{ID: 6, Code: "ra_ine", StatTypeID: 0x7e, Tier: RuneTierRa, Weight: RuneWeightStat, PowerValue: 10, ItemAnkaID: 1553},
+
+	// Chance runes
+	{ID: 7, Code: "cha", StatTypeID: 0x7b, Tier: RuneTierBa, Weight: RuneWeightStat, PowerValue: 1, ItemAnkaID: 1525},
+	{ID: 8, Code: "pa_cha", StatTypeID: 0x7b, Tier: RuneTierPa, Weight: RuneWeightStat, PowerValue: 3, ItemAnkaID: 1550},
+	{ID: 9, Code: "ra_cha", StatTypeID: 0x7b, Tier: RuneTierRa, Weight: RuneWeightStat, PowerValue: 10, ItemAnkaID: 1556},
+
+	// Agility runes
+	{ID: 10, Code: "age", StatTypeID: 0x77, Tier: RuneTierBa, Weight: RuneWeightStat, PowerValue: 1, ItemAnkaID: 1524},
+	{ID: 11, Code: "pa_age", StatTypeID: 0x77, Tier: RuneTierPa, Weight: RuneWeightStat, PowerValue: 3, ItemAnkaID: 1549},
+	{ID: 12, Code: "ra_age", StatTypeID: 0x77, Tier: RuneTierRa, Weight: RuneWeightStat, PowerValue: 10, ItemAnkaID: 1555},
+
+	// === WISDOM / PROSPECTING (Weight = 3) ===
+	// Wisdom (Sagesse) runes
+	{ID: 13, Code: "sa", StatTypeID: 0x7c, Tier: RuneTierBa, Weight: RuneWeightSaProspec, PowerValue: 1, ItemAnkaID: 1521},
+	{ID: 14, Code: "pa_sa", StatTypeID: 0x7c, Tier: RuneTierPa, Weight: RuneWeightSaProspec, PowerValue: 3, ItemAnkaID: 1546},
+	{ID: 15, Code: "ra_sa", StatTypeID: 0x7c, Tier: RuneTierRa, Weight: RuneWeightSaProspec, PowerValue: 10, ItemAnkaID: 1552},
+
+	// Prospecting runes
+	{ID: 16, Code: "prospe", StatTypeID: 0xb0, Tier: RuneTierBa, Weight: RuneWeightSaProspec, PowerValue: 1, ItemAnkaID: 7451},
+	{ID: 17, Code: "pa_prospe", StatTypeID: 0xb0, Tier: RuneTierPa, Weight: RuneWeightSaProspec, PowerValue: 3, ItemAnkaID: 10662},
+
+	// === VITALITY (Weight = 0.25, but uses special thresholds) ===
+	// Vitality runes - special weight, uses different thresholds (Pa Vi = 27, Ra Vi = 104)
+	{ID: 18, Code: "vi", StatTypeID: 0x7d, Tier: RuneTierBa, Weight: 0.25, PowerValue: 4, ItemAnkaID: 1523},
+	{ID: 19, Code: "pa_vi", StatTypeID: 0x7d, Tier: RuneTierPa, Weight: 0.25, PowerValue: 10, ItemAnkaID: 1548},
+	{ID: 20, Code: "ra_vi", StatTypeID: 0x7d, Tier: RuneTierRa, Weight: 0.25, PowerValue: 30, ItemAnkaID: 1554},
+
+	// === INITIATIVE / PODS (Weight = 0.1) ===
+	// Initiative runes
+	{ID: 21, Code: "ini", StatTypeID: 0xae, Tier: RuneTierBa, Weight: 0.1, PowerValue: 10, ItemAnkaID: 7448},
+	{ID: 22, Code: "pa_ini", StatTypeID: 0xae, Tier: RuneTierPa, Weight: 0.1, PowerValue: 30, ItemAnkaID: 7449},
+	{ID: 23, Code: "ra_ini", StatTypeID: 0xae, Tier: RuneTierRa, Weight: 0.1, PowerValue: 100, ItemAnkaID: 7450},
+
+	// Pods runes
+	{ID: 24, Code: "pod", StatTypeID: 0x9e, Tier: RuneTierBa, Weight: 0.1, PowerValue: 10, ItemAnkaID: 7443},
+	{ID: 25, Code: "pa_pod", StatTypeID: 0x9e, Tier: RuneTierPa, Weight: 0.1, PowerValue: 30, ItemAnkaID: 7444},
+	{ID: 26, Code: "ra_pod", StatTypeID: 0x9e, Tier: RuneTierRa, Weight: 0.1, PowerValue: 100, ItemAnkaID: 7445},
+
+	// === SINGLE TIER RUNES (AP, MP, Range) ===
+	// AP rune (Ga Pa) - single tier, level-based chance
+	{ID: 27, Code: "ga_pa", StatTypeID: 0x6f, Tier: RuneTierSingle, Weight: RuneWeightGaPa, PowerValue: 1, ItemAnkaID: 1557},
+
+	// MP rune (Ga Pme) - single tier, level-based chance
+	{ID: 28, Code: "ga_pme", StatTypeID: 0x80, Tier: RuneTierSingle, Weight: RuneWeightGaPme, PowerValue: 1, ItemAnkaID: 1558},
+
+	// Range rune (Po) - single tier, level-based chance
+	{ID: 29, Code: "po", StatTypeID: 0x75, Tier: RuneTierSingle, Weight: RuneWeightPo, PowerValue: 1, ItemAnkaID: 7438},
+
+	// === DAMAGE RUNES (Weight = 20) ===
+	// Damage (Do) rune
+	{ID: 30, Code: "do", StatTypeID: 0x70, Tier: RuneTierSingle, Weight: RuneWeightDoSo, PowerValue: 1, ItemAnkaID: 7435},
+
+	// Heals (So) rune
+	{ID: 31, Code: "so", StatTypeID: 0xb2, Tier: RuneTierSingle, Weight: RuneWeightDoSo, PowerValue: 1, ItemAnkaID: 7434},
+
+	// === CRITICAL / SUMMONS (Weight = 30) ===
+	// Critical hit (Cri) rune
+	{ID: 32, Code: "cri", StatTypeID: 0x73, Tier: RuneTierSingle, Weight: RuneWeightCriInvoDoRen, PowerValue: 1, ItemAnkaID: 7433},
+
+	// Summons (Invo) rune
+	{ID: 33, Code: "invo", StatTypeID: 0xb6, Tier: RuneTierBa, Weight: RuneWeightCriInvoDoRen, PowerValue: 1, ItemAnkaID: 7442},
+
+	// Reflect damage (Do Ren) rune
+	{ID: 34, Code: "do_ren", StatTypeID: 0xdc, Tier: RuneTierBa, Weight: RuneWeightCriInvoDoRen, PowerValue: 1, ItemAnkaID: 7437},
+
+	// === FIXED RESISTANCES (Weight = 5) ===
+	// Neutral resistance
+	{ID: 35, Code: "re_neu", StatTypeID: 0xf4, Tier: RuneTierSingle, Weight: RuneWeightRe, PowerValue: 1, ItemAnkaID: 7456},
+	// Earth resistance
+	{ID: 36, Code: "re_ter", StatTypeID: 0xf0, Tier: RuneTierSingle, Weight: RuneWeightRe, PowerValue: 1, ItemAnkaID: 7455},
+	// Fire resistance
+	{ID: 37, Code: "re_feu", StatTypeID: 0xf3, Tier: RuneTierSingle, Weight: RuneWeightRe, PowerValue: 1, ItemAnkaID: 7452},
+	// Water resistance
+	{ID: 38, Code: "re_eau", StatTypeID: 0xf1, Tier: RuneTierSingle, Weight: RuneWeightRe, PowerValue: 1, ItemAnkaID: 7454},
+	// Air resistance
+	{ID: 39, Code: "re_air", StatTypeID: 0xf2, Tier: RuneTierSingle, Weight: RuneWeightRe, PowerValue: 1, ItemAnkaID: 7453},
+
+	// === PERCENTAGE RESISTANCES (Weight = 10) ===
+	// Neutral resistance %
+	{ID: 40, Code: "re_per_neu", StatTypeID: 0xd6, Tier: RuneTierSingle, Weight: RuneWeightRePer, PowerValue: 1, ItemAnkaID: 7460},
+	// Earth resistance %
+	{ID: 41, Code: "re_per_ter", StatTypeID: 0xd2, Tier: RuneTierSingle, Weight: RuneWeightRePer, PowerValue: 1, ItemAnkaID: 7459},
+	// Fire resistance %
+	{ID: 42, Code: "re_per_feu", StatTypeID: 0xd5, Tier: RuneTierSingle, Weight: RuneWeightRePer, PowerValue: 1, ItemAnkaID: 7457},
+	// Water resistance %
+	{ID: 43, Code: "re_per_eau", StatTypeID: 0xd3, Tier: RuneTierSingle, Weight: RuneWeightRePer, PowerValue: 1, ItemAnkaID: 7560},
+	// Air resistance %
+	{ID: 44, Code: "re_per_air", StatTypeID: 0xd4, Tier: RuneTierSingle, Weight: RuneWeightRePer, PowerValue: 1, ItemAnkaID: 7458},
+
+	// === DAMAGE % (Do Per / Pui) (Weight = 3) ===
+	{ID: 45, Code: "do_per", StatTypeID: 0x8a, Tier: RuneTierBa, Weight: RuneWeightDoPer, PowerValue: 1, ItemAnkaID: 7436},
+	{ID: 46, Code: "pa_do_per", StatTypeID: 0x8a, Tier: RuneTierPa, Weight: RuneWeightDoPer, PowerValue: 3, ItemAnkaID: 10618},
+	{ID: 47, Code: "ra_do_per", StatTypeID: 0x8a, Tier: RuneTierRa, Weight: RuneWeightDoPer, PowerValue: 10, ItemAnkaID: 10619},
+
+	// Rune de chasse (hunting weapon rune)
+	{ID: 48, Code: "chasse", StatTypeID: 0x31b, Tier: RuneTierBa, Weight: 5, PowerValue: 1, ItemAnkaID: 10057},
+
+	// Rune Trap Damage
+	{ID: 49, Code: "pi", StatTypeID: 0x65, Tier: RuneTierBa, Weight: RuneWeightDoPi, PowerValue: 1, ItemAnkaID: 7446},
+	{ID: 50, Code: "pa_pi", StatTypeID: 0x65, Tier: RuneTierPa, Weight: RuneWeightDoPi, PowerValue: 3, ItemAnkaID: 10613},
+
+	// Rune Pi Per (AP reduction %)
+	{ID: 51, Code: "pi_per", StatTypeID: 0x65, Tier: RuneTierBa, Weight: RuneWeightDoPer, PowerValue: 1, ItemAnkaID: 7447},
+	{ID: 52, Code: "pa_pi_per", StatTypeID: 0x65, Tier: RuneTierPa, Weight: RuneWeightDoPer, PowerValue: 3, ItemAnkaID: 10615},
+	{ID: 53, Code: "ra_pi_per", StatTypeID: 0x65, Tier: RuneTierRa, Weight: RuneWeightDoPer, PowerValue: 10, ItemAnkaID: 10616},
+}
+
+// AP rune drop chances by item level (level -> percentage)
+// Max is 66.66%, caps at level 119+
+var APRuneDropChanceByLevel = map[int]float64{
+	1: 0.0, 2: 0.02, 3: 0.04, 4: 0.08, 5: 0.12, 6: 0.17, 7: 0.23, 8: 0.30, 9: 0.38, 10: 0.47,
+	11: 0.57, 12: 0.68, 13: 0.80, 14: 0.93, 15: 1.07, 16: 1.21, 17: 1.37, 18: 1.54, 19: 1.71, 20: 1.90,
+	21: 2.09, 22: 2.30, 23: 2.51, 24: 2.73, 25: 2.96, 26: 3.21, 27: 3.46, 28: 3.72, 29: 3.99, 30: 4.27,
+	31: 4.56, 32: 4.86, 33: 5.17, 34: 5.48, 35: 5.81, 36: 6.15, 37: 6.49, 38: 6.85, 39: 7.21, 40: 7.59,
+	41: 7.97, 42: 8.37, 43: 8.77, 44: 9.18, 45: 9.61, 46: 10.04, 47: 10.48, 48: 10.93, 49: 11.39, 50: 11.86,
+	51: 12.34, 52: 12.83, 53: 13.32, 54: 13.83, 55: 14.35, 56: 14.88, 57: 15.41, 58: 15.96, 59: 16.51, 60: 17.08,
+	61: 17.65, 62: 18.23, 63: 18.83, 64: 19.43, 65: 20.04, 66: 20.66, 67: 21.29, 68: 21.93, 69: 22.58, 70: 23.24,
+	71: 23.91, 72: 24.59, 73: 25.28, 74: 25.97, 75: 26.68, 76: 27.40, 77: 28.12, 78: 28.86, 79: 29.60, 80: 30.36,
+	81: 31.12, 82: 31.89, 83: 32.68, 84: 33.47, 85: 34.27, 86: 35.08, 87: 35.90, 88: 36.73, 89: 37.57, 90: 38.42,
+	91: 39.28, 92: 40.15, 93: 41.03, 94: 41.91, 95: 42.81, 96: 43.72, 97: 44.63, 98: 45.56, 99: 46.49, 100: 47.43,
+	101: 48.39, 102: 49.35, 103: 50.32, 104: 51.30, 105: 52.30, 106: 53.30, 107: 54.31, 108: 55.33, 109: 56.36, 110: 57.40,
+	111: 58.44, 112: 59.50, 113: 60.57, 114: 61.65, 115: 62.73, 116: 63.83, 117: 64.93, 118: 66.05, 119: 66.66, 120: 66.66,
+}
+
+// MP rune drop chances by item level (level -> percentage)
+// Max is 66.66%, caps at level 111+
+var MPRuneDropChanceByLevel = map[int]float64{
+	1: 0.01, 2: 0.02, 3: 0.05, 4: 0.09, 5: 0.14, 6: 0.19, 7: 0.27, 8: 0.35, 9: 0.44, 10: 0.54,
+	11: 0.65, 12: 0.78, 13: 0.91, 14: 1.06, 15: 1.22, 16: 1.39, 17: 1.56, 18: 1.75, 19: 1.95, 20: 2.16,
+	21: 2.39, 22: 2.62, 23: 2.86, 24: 3.12, 25: 3.38, 26: 3.66, 27: 3.94, 28: 4.24, 29: 4.55, 30: 4.87,
+	31: 5.20, 32: 5.54, 33: 5.89, 34: 6.26, 35: 6.63, 36: 7.01, 37: 7.41, 38: 7.81, 39: 8.23, 40: 8.66,
+	41: 9.10, 42: 9.55, 43: 10.01, 44: 10.48, 45: 10.96, 46: 11.45, 47: 11.95, 48: 12.47, 49: 12.99, 50: 13.53,
+	51: 14.07, 52: 14.63, 53: 15.20, 54: 15.78, 55: 16.37, 56: 16.97, 57: 17.58, 58: 18.20, 59: 18.84, 60: 19.48,
+	61: 20.13, 62: 20.80, 63: 21.48, 64: 22.16, 65: 22.86, 66: 23.57, 67: 24.29, 68: 25.02, 69: 25.76, 70: 26.51,
+	71: 27.28, 72: 28.05, 73: 28.84, 74: 29.63, 75: 30.44, 76: 31.25, 77: 32.08, 78: 32.92, 79: 33.77, 80: 34.63,
+	81: 35.50, 82: 36.38, 83: 37.28, 84: 38.18, 85: 39.10, 86: 40.02, 87: 40.96, 88: 41.90, 89: 42.86, 90: 43.83,
+	91: 44.81, 92: 45.80, 93: 46.80, 94: 47.81, 95: 48.84, 96: 49.87, 97: 50.91, 98: 51.97, 99: 53.03, 100: 54.11,
+	101: 55.20, 102: 56.30, 103: 57.41, 104: 58.53, 105: 59.66, 106: 60.80, 107: 61.95, 108: 63.12, 109: 64.29, 110: 65.47,
+	111: 66.66, 112: 66.66,
+}
+
+// MaxRuneDropChance is the maximum drop chance for any rune (2/3)
+const MaxRuneDropChance = 66.66
+
+// RuneThreshold defines the stat value thresholds for guaranteed rune drops
+type RuneThreshold struct {
+	StatCode       string // e.g., "strength", "vitality"
+	BaThreshold    int    // Minimum jet for 100% Ba rune
+	PaThreshold    int    // Minimum jet for 100% Pa rune
+	RaThreshold    int    // Minimum jet for 100% Ra rune
+	IntermediatePa int    // Intermediate value for Pa calculation
+	IntermediateRa int    // Intermediate value for Ra calculation
+}
+
+// RuneThresholds contains the threshold data for different stat types
+// Formula: 100% of rune X = [intermediate_threshold / (2/3)] / 0.9
+var RuneThresholds = map[string]RuneThreshold{
+	// Main stats (Fo, Ine, Cha, Age) - Weight = 1
+	"strength":     {StatCode: "strength", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+	"intelligence": {StatCode: "intelligence", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+	"chance":       {StatCode: "chance", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+	"agility":      {StatCode: "agility", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+
+	// Wisdom/Prospecting - Weight = 3
+	"wisdom":      {StatCode: "wisdom", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+	"prospecting": {StatCode: "prospecting", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+
+	// Vitality - special thresholds
+	"vitality": {StatCode: "vitality", BaThreshold: 5, PaThreshold: 27, RaThreshold: 104, IntermediatePa: 16, IntermediateRa: 62},
+
+	// Initiative/Pods - thresholds * 10
+	"initiative": {StatCode: "initiative", BaThreshold: 17, PaThreshold: 84, RaThreshold: 334, IntermediatePa: 50, IntermediateRa: 200},
+	"pods":       {StatCode: "pods", BaThreshold: 17, PaThreshold: 84, RaThreshold: 334, IntermediatePa: 50, IntermediateRa: 200},
+
+	// Damage % (Pui)
+	"damage_percent": {StatCode: "damage_percent", BaThreshold: 2, PaThreshold: 9, RaThreshold: 34, IntermediatePa: 5, IntermediateRa: 20},
+}
+
+// GetAPRuneDropChance returns the drop chance for AP rune based on item level
+func GetAPRuneDropChance(level int) float64 {
+	if level <= 0 {
+		return 0
+	}
+	if level >= 119 {
+		return MaxRuneDropChance
+	}
+	if chance, exists := APRuneDropChanceByLevel[level]; exists {
+		return chance
+	}
+	return 0
+}
+
+// GetMPRuneDropChance returns the drop chance for MP rune based on item level
+func GetMPRuneDropChance(level int) float64 {
+	if level <= 0 {
+		return 0
+	}
+	if level >= 111 {
+		return MaxRuneDropChance
+	}
+	if chance, exists := MPRuneDropChanceByLevel[level]; exists {
+		return chance
+	}
+	return 0
 }

@@ -88,6 +88,7 @@ func (ds *DatabaseService) initSchema() error {
 		&ItemSetTranslationModel{},
 		&RecipeModel{},
 		&IngredientModel{},
+		&RuneModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
@@ -108,6 +109,9 @@ func (ds *DatabaseService) initSchema() error {
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_recipes_item_id ON recipes(item_id)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_ingredients_recipe_id ON ingredients(recipe_id)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_ingredients_item_id ON ingredients(item_id)")
+	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_runes_code ON runes(code)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_runes_stat_type_id ON runes(stat_type_id)")
+	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_runes_item_anka_id ON runes(item_anka_id)")
 
 	return nil
 }
@@ -345,15 +349,16 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 
 // ItemSearchFilters contains all filter options for item search
 type ItemSearchFilters struct {
-	SearchValue string
-	Language    string
-	TypeAnkaIDs []int
-	StatTypeIDs []int
-	MinLevel    *int
-	MaxLevel    *int
-	LevelOrder  string // "asc", "desc", or empty for default
-	Limit       int
-	Offset      int
+	SearchValue   string
+	Language      string
+	TypeAnkaIDs   []int
+	StatTypeIDs   []int
+	MinLevel      *int
+	MaxLevel      *int
+	LevelOrder    string // "asc", "desc", or empty for default
+	CraftableOnly bool   // If true, only return items that have a recipe
+	Limit         int
+	Offset        int
 }
 
 // GetItemsSearchPaginated retrieves items with pagination and priority sorting at the database level
@@ -405,6 +410,11 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 			Having("COUNT(DISTINCT ist.stat_type_id) = ?", len(filters.StatTypeIDs))
 	}
 
+	// Add craftable filter if provided
+	if filters.CraftableOnly {
+		baseQuery = baseQuery.Where("EXISTS (SELECT 1 FROM recipes WHERE recipes.item_id = items.id)")
+	}
+
 	// Get total count
 	var count int64
 	countQuery := baseQuery.Count(&count)
@@ -418,6 +428,8 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 		Preload("Translations", "language = ?", filters.Language).
 		Preload("Type.Translations", "language = ?", filters.Language).
 		Preload("Stats.StatType.Translations", "language = ?", filters.Language).
+		Preload("Stats.StatType.Runes.Item.Translations", "language = ?", filters.Language).
+		Preload("Stats.StatType.Runes.Item.Type").
 		Joins("JOIN item_translations it ON items.id = it.item_id").
 		Where("it.language = ?", filters.Language)
 
@@ -455,6 +467,11 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 				Group("item_id").
 				Having("COUNT(DISTINCT stat_type_id) = ?", len(filters.StatTypeIDs)),
 		)
+	}
+
+	// Add craftable filter if provided
+	if filters.CraftableOnly {
+		query = query.Where("EXISTS (SELECT 1 FROM recipes WHERE recipes.item_id = items.id)")
 	}
 
 	// Apply level ordering if specified
@@ -742,6 +759,8 @@ func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (
 		Preload("Translations", "language = ?", language).
 		Preload("Type.Translations", "language = ?", language).
 		Preload("Stats.StatType.Translations", "language = ?", language).
+		Preload("Stats.StatType.Runes.Item.Translations", "language = ?", language).
+		Preload("Stats.StatType.Runes.Item.Type").
 		Where("anka_id = ?", ankaId).
 		First(&item).Error
 
@@ -1129,5 +1148,186 @@ func (ds *DatabaseService) SeedStatTypes() error {
 	}
 
 	fmt.Printf("Successfully seeded %d stat types with translations\n", len(StatTypeSeedData))
+	return nil
+}
+
+// SeedRunes seeds the runes table with predefined rune data
+func (ds *DatabaseService) SeedRunes() error {
+	fmt.Println("Seeding runes...")
+
+	// Begin transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Clear existing runes
+	if err := tx.Exec("DELETE FROM runes").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear runes: %v", err)
+	}
+
+	// Build a map of AnkaID -> ItemID for resolving rune items
+	var items []ItemModel
+	if err := ds.db.Select("id", "anka_id").Find(&items).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to load items for rune resolution: %v", err)
+	}
+	ankaIDToItemID := make(map[int]uint)
+	for _, item := range items {
+		ankaIDToItemID[item.AnkaId] = item.ID
+	}
+
+	// Insert runes from seed data
+	resolvedCount := 0
+	for _, runeData := range RuneSeedData {
+		runeModel := RuneModel{
+			ID:         runeData.ID,
+			Code:       runeData.Code,
+			StatTypeID: runeData.StatTypeID,
+			Tier:       runeData.Tier,
+			Weight:     runeData.Weight,
+			PowerValue: runeData.PowerValue,
+			ItemAnkaID: runeData.ItemAnkaID,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+
+		// Resolve ItemAnkaID to ItemID if the item exists
+		if runeData.ItemAnkaID > 0 {
+			if itemID, exists := ankaIDToItemID[runeData.ItemAnkaID]; exists {
+				runeModel.ItemID = &itemID
+				resolvedCount++
+			}
+		}
+
+		if err := tx.Create(&runeModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to insert rune %s: %v", runeData.Code, err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully seeded %d runes (%d with resolved item links)\n", len(RuneSeedData), resolvedCount)
+	return nil
+}
+
+// GetAllRunes retrieves all runes with their related stat types and items
+func (ds *DatabaseService) GetAllRunes(language string) ([]RuneModel, error) {
+	var runes []RuneModel
+	err := ds.db.
+		Preload("StatType.Translations", "language = ?", language).
+		Preload("Item.Translations", "language = ?", language).
+		Preload("Item.Type").
+		Find(&runes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get runes: %v", err)
+	}
+
+	return runes, nil
+}
+
+// GetRuneByCode retrieves a rune by its code
+func (ds *DatabaseService) GetRuneByCode(code string, language string) (*RuneModel, error) {
+	var runeRecord RuneModel
+	err := ds.db.
+		Preload("StatType.Translations", "language = ?", language).
+		Preload("Item.Translations", "language = ?", language).
+		Preload("Item.Type").
+		Where("code = ?", code).
+		First(&runeRecord).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get rune by code: %v", err)
+	}
+
+	return &runeRecord, nil
+}
+
+// GetRunesByStatTypeID retrieves all runes for a specific stat type (all tiers)
+func (ds *DatabaseService) GetRunesByStatTypeID(statTypeID int, language string) ([]RuneModel, error) {
+	var runes []RuneModel
+	err := ds.db.
+		Preload("StatType.Translations", "language = ?", language).
+		Preload("Item.Translations", "language = ?", language).
+		Preload("Item.Type").
+		Where("stat_type_id = ?", statTypeID).
+		Order("CASE tier WHEN 'ba' THEN 1 WHEN 'pa' THEN 2 WHEN 'ra' THEN 3 WHEN 'single' THEN 0 END").
+		Find(&runes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get runes by stat type ID: %v", err)
+	}
+
+	return runes, nil
+}
+
+// GetRunesByTier retrieves all runes of a specific tier
+func (ds *DatabaseService) GetRunesByTier(tier string, language string) ([]RuneModel, error) {
+	var runes []RuneModel
+	err := ds.db.
+		Preload("StatType.Translations", "language = ?", language).
+		Preload("Item.Translations", "language = ?", language).
+		Preload("Item.Type").
+		Where("tier = ?", tier).
+		Find(&runes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get runes by tier: %v", err)
+	}
+
+	return runes, nil
+}
+
+// UpdateRuneItemAnkaID updates the ItemAnkaID for a specific rune
+func (ds *DatabaseService) UpdateRuneItemAnkaID(runeCode string, itemAnkaID int) error {
+	result := ds.db.Model(&RuneModel{}).
+		Where("code = ?", runeCode).
+		Update("item_anka_id", itemAnkaID)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update rune item_anka_id: %v", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("rune with code %s not found", runeCode)
+	}
+	return nil
+}
+
+// UpdateRuneItemAnkaIDs updates ItemAnkaIDs for multiple runes at once
+// runeItemMap is a map of rune code -> item AnkaID
+func (ds *DatabaseService) UpdateRuneItemAnkaIDs(runeItemMap map[string]int) error {
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	for runeCode, itemAnkaID := range runeItemMap {
+		result := tx.Model(&RuneModel{}).
+			Where("code = ?", runeCode).
+			Update("item_anka_id", itemAnkaID)
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update rune %s: %v", runeCode, result.Error)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully updated ItemAnkaIDs for %d runes\n", len(runeItemMap))
 	return nil
 }
