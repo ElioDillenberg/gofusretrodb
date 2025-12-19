@@ -118,16 +118,26 @@ func (ds *DatabaseService) initSchema() error {
 
 // ClearAllData removes all existing item data from the database
 func (ds *DatabaseService) ClearAllData() error {
+	fmt.Println("Clearing all data from database...")
+	ds.db.Exec("DELETE FROM runes")
 	ds.db.Exec("DELETE FROM item_stats")
 	ds.db.Exec("DELETE FROM item_conditions")
 	ds.db.Exec("DELETE FROM item_translations")
 	ds.db.Exec("DELETE FROM ingredients")
 	ds.db.Exec("DELETE FROM recipes")
 	ds.db.Exec("DELETE FROM items")
+	ds.db.Exec("DELETE FROM item_type_translations")
+	ds.db.Exec("DELETE FROM item_types")
+	ds.db.Exec("DELETE FROM stat_type_translations")
+	ds.db.Exec("DELETE FROM stat_types")
+	ds.db.Exec("DELETE FROM stat_type_category_translations")
+	ds.db.Exec("DELETE FROM stat_type_categories")
+	fmt.Println("All data cleared!")
 	return nil
 }
 
-// SaveItems saves parsed items to the database
+// SaveItems saves parsed items to the database using upsert logic
+// Items are matched by AnkaId - existing items are updated, new items are inserted
 func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 	// Begin transaction
 	tx := ds.db.Begin()
@@ -154,15 +164,13 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 
 			translation := item.Translations[0]
 			itemMap[item.ID] = &ItemModel{
-				AnkaId:       item.ID,     // Store original DOFUS item ID
-				TypeAnkaId:   item.TypeID, // Store original DOFUS type ID (references ItemType.AnkaId)
+				AnkaId:       item.ID,
+				TypeAnkaId:   item.TypeID,
 				Level:        item.Level,
 				Requirements: item.Requirements,
 				GfxID:        item.GfxID,
 				Price:        item.Price,
 				Weight:       item.Weight,
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
 			}
 
 			// Initialize translation map for this item
@@ -174,8 +182,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 				Name:        translation.Name,
 				NameUpper:   translation.NameUpper,
 				Description: translation.Description,
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
 			}
 		}
 	}
@@ -200,8 +206,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					Name:        translation.Name,
 					NameUpper:   translation.NameUpper,
 					Description: translation.Description,
-					CreatedAt:   time.Now(),
-					UpdatedAt:   time.Now(),
 				}
 
 				// Update item data with more complete information if available
@@ -221,8 +225,6 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					Price:        item.Price,
 					Weight:       item.Weight,
 					Requirements: item.Requirements,
-					CreatedAt:    time.Now(),
-					UpdatedAt:    time.Now(),
 				}
 
 				translationMap[item.ID] = make(map[string]ItemTranslationModel)
@@ -231,35 +233,84 @@ func (ds *DatabaseService) SaveItems(allItems map[string][]Item) error {
 					Name:        translation.Name,
 					NameUpper:   translation.NameUpper,
 					Description: translation.Description,
-					CreatedAt:   time.Now(),
-					UpdatedAt:   time.Now(),
 				}
 			}
 		}
 	}
 
-	// Insert items and their translations
+	// UPSERT items and their translations
 	itemsInserted := 0
+	itemsUpdated := 0
 	for ankaId, item := range itemMap {
-		// Create item
-		if err := tx.Create(item).Error; err != nil {
+		// Check if item already exists by AnkaId
+		var existingItem ItemModel
+		err := tx.Where("anka_id = ?", ankaId).First(&existingItem).Error
+
+		if err == nil {
+			// Item exists - update it
+			existingItem.TypeAnkaId = item.TypeAnkaId
+			existingItem.Level = item.Level
+			existingItem.Requirements = item.Requirements
+			existingItem.GfxID = item.GfxID
+			existingItem.Price = item.Price
+			existingItem.Weight = item.Weight
+			existingItem.UpdatedAt = time.Now()
+
+			if err := tx.Save(&existingItem).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update item with AnkaId %d: %v", ankaId, err)
+			}
+			item.ID = existingItem.ID // Use existing primary key for translations
+			itemsUpdated++
+		} else if err == gorm.ErrRecordNotFound {
+			// Item doesn't exist - create it
+			item.CreatedAt = time.Now()
+			item.UpdatedAt = time.Now()
+			if err := tx.Create(item).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to insert item with AnkaId %d: %v", ankaId, err)
+			}
+			itemsInserted++
+		} else {
 			tx.Rollback()
-			return fmt.Errorf("failed to insert item with AnkaId %d: %v", ankaId, err)
+			return fmt.Errorf("failed to check existing item with AnkaId %d: %v", ankaId, err)
 		}
 
-		itemsInserted++
-
-		// Insert translations
-		for _, translation := range translationMap[ankaId] {
+		// UPSERT translations
+		for lang, translation := range translationMap[ankaId] {
 			translation.ItemID = item.ID
-			if err := tx.Create(&translation).Error; err != nil {
+
+			// Check if translation already exists
+			var existingTranslation ItemTranslationModel
+			err := tx.Where("item_id = ? AND language = ?", item.ID, lang).First(&existingTranslation).Error
+
+			if err == nil {
+				// Translation exists - update it
+				existingTranslation.Name = translation.Name
+				existingTranslation.NameUpper = translation.NameUpper
+				existingTranslation.Description = translation.Description
+				existingTranslation.UpdatedAt = time.Now()
+
+				if err := tx.Save(&existingTranslation).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update translation for AnkaId %d, language %s: %v", ankaId, lang, err)
+				}
+			} else if err == gorm.ErrRecordNotFound {
+				// Translation doesn't exist - create it
+				translation.CreatedAt = time.Now()
+				translation.UpdatedAt = time.Now()
+				if err := tx.Create(&translation).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to insert translation for AnkaId %d, language %s: %v", ankaId, lang, err)
+				}
+			} else {
 				tx.Rollback()
-				return fmt.Errorf("failed to insert translation for AnkaId %d: %v", ankaId, err)
+				return fmt.Errorf("failed to check existing translation for AnkaId %d, language %s: %v", ankaId, lang, err)
 			}
 		}
 	}
 
-	fmt.Printf("Successfully inserted %d items with translations\n", itemsInserted)
+	fmt.Printf("Successfully processed %d items (%d inserted, %d updated) with translations\n", itemsInserted+itemsUpdated, itemsInserted, itemsUpdated)
 	return tx.Commit().Error
 }
 
@@ -501,6 +552,172 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 	return items, totalCount, nil
 }
 
+// DiagnoseItems helps debug issues with item queries by checking database state
+func (ds *DatabaseService) DiagnoseItems(language string) error {
+	// Check total items count
+	var itemCount int64
+	if err := ds.db.Model(&ItemModel{}).Count(&itemCount).Error; err != nil {
+		return fmt.Errorf("failed to count items: %v", err)
+	}
+	fmt.Printf("Total items in database: %d\n", itemCount)
+
+	// Check total translations count
+	var translationCount int64
+	if err := ds.db.Model(&ItemTranslationModel{}).Count(&translationCount).Error; err != nil {
+		return fmt.Errorf("failed to count translations: %v", err)
+	}
+	fmt.Printf("Total item translations in database: %d\n", translationCount)
+
+	// Check translations for specific language
+	var langTranslationCount int64
+	if err := ds.db.Model(&ItemTranslationModel{}).Where("language = ?", language).Count(&langTranslationCount).Error; err != nil {
+		return fmt.Errorf("failed to count translations for language %s: %v", language, err)
+	}
+	fmt.Printf("Item translations for language '%s': %d\n", language, langTranslationCount)
+
+	// Check item stats
+	var statsCount int64
+	if err := ds.db.Model(&ItemStatModel{}).Count(&statsCount).Error; err != nil {
+		return fmt.Errorf("failed to count item stats: %v", err)
+	}
+	fmt.Printf("Total item stats in database: %d\n", statsCount)
+
+	// Check stat types
+	var statTypesCount int64
+	if err := ds.db.Model(&StatTypeModel{}).Count(&statTypesCount).Error; err != nil {
+		return fmt.Errorf("failed to count stat types: %v", err)
+	}
+	fmt.Printf("Total stat types in database: %d\n", statTypesCount)
+
+	// Check recipes
+	var recipesCount int64
+	if err := ds.db.Model(&RecipeModel{}).Count(&recipesCount).Error; err != nil {
+		return fmt.Errorf("failed to count recipes: %v", err)
+	}
+	fmt.Printf("Total recipes in database: %d\n", recipesCount)
+
+	// Check ingredients
+	var ingredientsCount int64
+	if err := ds.db.Model(&IngredientModel{}).Count(&ingredientsCount).Error; err != nil {
+		return fmt.Errorf("failed to count ingredients: %v", err)
+	}
+	fmt.Printf("Total ingredients in database: %d\n", ingredientsCount)
+
+	// Check runes
+	var runesCount int64
+	if err := ds.db.Model(&RuneModel{}).Count(&runesCount).Error; err != nil {
+		return fmt.Errorf("failed to count runes: %v", err)
+	}
+	fmt.Printf("Total runes in database: %d\n", runesCount)
+
+	// Check for orphaned stats (stats referencing non-existent items)
+	var orphanedStats int64
+	if err := ds.db.Raw("SELECT COUNT(*) FROM item_stats WHERE item_id NOT IN (SELECT id FROM items)").Scan(&orphanedStats).Error; err != nil {
+		fmt.Printf("Warning: Could not check orphaned stats: %v\n", err)
+	} else {
+		fmt.Printf("Orphaned item stats (referencing deleted items): %d\n", orphanedStats)
+	}
+
+	// Check for orphaned recipes
+	var orphanedRecipes int64
+	if err := ds.db.Raw("SELECT COUNT(*) FROM recipes WHERE item_id NOT IN (SELECT id FROM items)").Scan(&orphanedRecipes).Error; err != nil {
+		fmt.Printf("Warning: Could not check orphaned recipes: %v\n", err)
+	} else {
+		fmt.Printf("Orphaned recipes (referencing deleted items): %d\n", orphanedRecipes)
+	}
+
+	// Check items with translations for this language (the actual join query)
+	var joinCount int64
+	if err := ds.db.Table("items").
+		Joins("JOIN item_translations it ON items.id = it.item_id").
+		Where("it.language = ?", language).
+		Count(&joinCount).Error; err != nil {
+		return fmt.Errorf("failed to count items with translations: %v", err)
+	}
+	fmt.Printf("\nItems with translations for language '%s' (JOIN query): %d\n", language, joinCount)
+
+	// Test the actual GetItemsSearchPaginatedWithFilters function
+	fmt.Printf("\n=== Testing GetItemsSearchPaginatedWithFilters ===\n")
+	filters := ItemSearchFilters{
+		SearchValue: "",
+		Language:    language,
+		Limit:       10,
+		Offset:      0,
+	}
+	items, totalCount, err := ds.GetItemsSearchPaginatedWithFilters(filters)
+	if err != nil {
+		fmt.Printf("ERROR: GetItemsSearchPaginatedWithFilters failed: %v\n", err)
+	} else {
+		fmt.Printf("GetItemsSearchPaginatedWithFilters returned: %d items, totalCount: %d\n", len(items), totalCount)
+		for i, item := range items {
+			if i >= 5 {
+				fmt.Printf("  ... and %d more\n", len(items)-5)
+				break
+			}
+			name := "NO TRANSLATION"
+			if len(item.Translations) > 0 {
+				name = item.Translations[0].Name
+			}
+
+			// Check how many stats this item has in the database directly
+			var dbStatsCount int64
+			ds.db.Model(&ItemStatModel{}).Where("item_id = ?", item.ID).Count(&dbStatsCount)
+
+			fmt.Printf("  - ID: %d, AnkaID: %d, Name: %s, Loaded Stats: %d, DB Stats: %d\n",
+				item.ID, item.AnkaId, name, len(item.Stats), dbStatsCount)
+		}
+	}
+
+	// Find items that actually have stats
+	fmt.Printf("\n=== Items WITH stats in DB ===\n")
+	var itemsWithStats []struct {
+		ItemID     uint
+		StatsCount int64
+	}
+	ds.db.Raw(`
+		SELECT item_id, COUNT(*) as stats_count 
+		FROM item_stats 
+		GROUP BY item_id 
+		ORDER BY stats_count DESC 
+		LIMIT 5
+	`).Scan(&itemsWithStats)
+
+	for _, iws := range itemsWithStats {
+		var item ItemModel
+		ds.db.Preload("Translations", "language = ?", language).
+			Preload("Stats").
+			Where("id = ?", iws.ItemID).First(&item)
+
+		name := "NO TRANSLATION"
+		if len(item.Translations) > 0 {
+			name = item.Translations[0].Name
+		}
+		fmt.Printf("  - ID: %d, AnkaID: %d, Name: %s, TypeAnkaID: %d, DB Stats: %d, Loaded Stats: %d\n",
+			item.ID, item.AnkaId, name, item.TypeAnkaId, iws.StatsCount, len(item.Stats))
+
+		// Check if there's another item with the same AnkaID but different ID
+		var duplicates []ItemModel
+		ds.db.Where("anka_id = ?", item.AnkaId).Find(&duplicates)
+		if len(duplicates) > 1 {
+			fmt.Printf("    ⚠️  DUPLICATE ITEMS for AnkaID %d:\n", item.AnkaId)
+			for _, dup := range duplicates {
+				var dupTransCount int64
+				var dupStatsCount int64
+				ds.db.Model(&ItemTranslationModel{}).Where("item_id = ?", dup.ID).Count(&dupTransCount)
+				ds.db.Model(&ItemStatModel{}).Where("item_id = ?", dup.ID).Count(&dupStatsCount)
+				fmt.Printf("       - ID: %d, Translations: %d, Stats: %d\n", dup.ID, dupTransCount, dupStatsCount)
+			}
+		}
+	}
+
+	// Check total duplicate AnkaIDs
+	var duplicateCount int64
+	ds.db.Raw(`SELECT COUNT(*) FROM (SELECT anka_id FROM items GROUP BY anka_id HAVING COUNT(*) > 1) as dups`).Scan(&duplicateCount)
+	fmt.Printf("\n⚠️  Total AnkaIDs with duplicate items: %d\n", duplicateCount)
+
+	return nil
+}
+
 // GetItemPrimaryKeyByAnkaId finds the PostgreSQL primary key for an item by its original DOFUS ID
 func (ds *DatabaseService) GetItemPrimaryKeyByAnkaId(ankaId int) (uint, error) {
 	var item ItemModel
@@ -509,6 +726,155 @@ func (ds *DatabaseService) GetItemPrimaryKeyByAnkaId(ankaId int) (uint, error) {
 		return 0, err
 	}
 	return item.ID, nil
+}
+
+// MergeDuplicateItems finds items with the same AnkaId and merges them
+// It keeps the item with translations and moves stats/recipes from the other
+func (ds *DatabaseService) MergeDuplicateItems() error {
+	fmt.Println("Finding and merging duplicate items...")
+
+	// Find all AnkaIds with duplicates
+	var duplicateAnkaIds []int
+	err := ds.db.Raw(`
+		SELECT anka_id 
+		FROM items 
+		GROUP BY anka_id 
+		HAVING COUNT(*) > 1
+	`).Scan(&duplicateAnkaIds).Error
+	if err != nil {
+		return fmt.Errorf("failed to find duplicate AnkaIds: %v", err)
+	}
+
+	fmt.Printf("Found %d AnkaIds with duplicates\n", len(duplicateAnkaIds))
+
+	if len(duplicateAnkaIds) == 0 {
+		fmt.Println("No duplicates to merge!")
+		return nil
+	}
+
+	// Begin transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	mergedCount := 0
+	for _, ankaId := range duplicateAnkaIds {
+		// Get all items with this AnkaId
+		var items []ItemModel
+		if err := tx.Where("anka_id = ?", ankaId).Find(&items).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to get items for AnkaId %d: %v", ankaId, err)
+		}
+
+		if len(items) < 2 {
+			continue
+		}
+
+		// Find the item with translations (the "keeper")
+		// and the item with stats (the "donor")
+		var keeperID, donorID uint
+		for _, item := range items {
+			var transCount int64
+			tx.Model(&ItemTranslationModel{}).Where("item_id = ?", item.ID).Count(&transCount)
+			if transCount > 0 {
+				keeperID = item.ID
+			} else {
+				donorID = item.ID
+			}
+		}
+
+		// If we couldn't determine keeper/donor, skip
+		if keeperID == 0 || donorID == 0 {
+			// Just keep the first one and delete the rest
+			keeperID = items[0].ID
+			for _, item := range items[1:] {
+				donorID = item.ID
+				// Move any stats
+				if err := tx.Exec("UPDATE item_stats SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to move stats for AnkaId %d: %v", ankaId, err)
+				}
+				// Move any recipes
+				if err := tx.Exec("UPDATE recipes SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to move recipes for AnkaId %d: %v", ankaId, err)
+				}
+				// Move any ingredients referencing this item
+				if err := tx.Exec("UPDATE ingredients SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to move ingredients for AnkaId %d: %v", ankaId, err)
+				}
+				// Move any runes referencing this item
+				if err := tx.Exec("UPDATE runes SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to move runes for AnkaId %d: %v", ankaId, err)
+				}
+				// Delete the donor item
+				if err := tx.Exec("DELETE FROM items WHERE id = ?", donorID).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to delete duplicate for AnkaId %d: %v", ankaId, err)
+				}
+			}
+			mergedCount++
+			continue
+		}
+
+		// Move stats from donor to keeper
+		if err := tx.Exec("UPDATE item_stats SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to move stats for AnkaId %d: %v", ankaId, err)
+		}
+
+		// Move recipes from donor to keeper
+		if err := tx.Exec("UPDATE recipes SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to move recipes for AnkaId %d: %v", ankaId, err)
+		}
+
+		// Move ingredients referencing donor to keeper
+		if err := tx.Exec("UPDATE ingredients SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to move ingredients for AnkaId %d: %v", ankaId, err)
+		}
+
+		// Move runes referencing donor to keeper
+		if err := tx.Exec("UPDATE runes SET item_id = ? WHERE item_id = ?", keeperID, donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to move runes for AnkaId %d: %v", ankaId, err)
+		}
+
+		// Delete the donor item (and any orphaned translations/conditions)
+		if err := tx.Exec("DELETE FROM item_translations WHERE item_id = ?", donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to delete donor translations for AnkaId %d: %v", ankaId, err)
+		}
+		if err := tx.Exec("DELETE FROM item_conditions WHERE item_id = ?", donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to delete donor conditions for AnkaId %d: %v", ankaId, err)
+		}
+		if err := tx.Exec("DELETE FROM items WHERE id = ?", donorID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to delete duplicate for AnkaId %d: %v", ankaId, err)
+		}
+
+		mergedCount++
+		if mergedCount%1000 == 0 {
+			fmt.Printf("  Merged %d/%d duplicates...\n", mergedCount, len(duplicateAnkaIds))
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully merged %d duplicate items\n", mergedCount)
+	return nil
 }
 
 // SaveRecipes saves recipes to the database using AnkaId mapping
@@ -1029,7 +1395,7 @@ func (ds *DatabaseService) GetStatTypeCategories(language string) ([]StatTypeCat
 }
 
 func (ds *DatabaseService) SeedStatTypes() error {
-	fmt.Println("Seeding stat type categories and stat types...")
+	fmt.Println("Seeding stat type categories and stat types (upsert mode)...")
 
 	// Begin transaction
 	tx := ds.db.Begin()
@@ -1042,102 +1408,158 @@ func (ds *DatabaseService) SeedStatTypes() error {
 		}
 	}()
 
-	// Clear existing item stats
-	if err := tx.Exec("DELETE FROM item_stats").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear item stats: %v", err)
-	}
+	categoriesInserted := 0
+	categoriesUpdated := 0
 
-	// Clear existing stat type translations first
-	if err := tx.Exec("DELETE FROM stat_type_translations").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear stat type translations: %v", err)
-	}
-
-	// Clear existing stat types
-	if err := tx.Exec("DELETE FROM stat_types").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear stat types: %v", err)
-	}
-
-	// Clear existing stat type category translations
-	if err := tx.Exec("DELETE FROM stat_type_category_translations").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear stat type category translations: %v", err)
-	}
-
-	// Clear existing stat type categories
-	if err := tx.Exec("DELETE FROM stat_type_categories").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to clear stat type categories: %v", err)
-	}
-
-	// Seed stat type categories first
+	// Upsert stat type categories
 	for _, category := range StatTypeCategorySeedData {
-		categoryModel := StatTypeCategoryModel{
-			ID:           category.ID,
-			Code:         category.Code,
-			DisplayOrder: category.DisplayOrder,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
+		var existingCategory StatTypeCategoryModel
+		err := tx.Where("id = ?", category.ID).First(&existingCategory).Error
 
-		if err := tx.Create(&categoryModel).Error; err != nil {
+		if err == nil {
+			// Category exists - update it
+			existingCategory.Code = category.Code
+			existingCategory.DisplayOrder = category.DisplayOrder
+			existingCategory.UpdatedAt = time.Now()
+
+			if err := tx.Save(&existingCategory).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update stat type category %s: %v", category.Code, err)
+			}
+			categoriesUpdated++
+		} else if err == gorm.ErrRecordNotFound {
+			// Category doesn't exist - create it
+			categoryModel := StatTypeCategoryModel{
+				ID:           category.ID,
+				Code:         category.Code,
+				DisplayOrder: category.DisplayOrder,
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+
+			if err := tx.Create(&categoryModel).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to insert stat type category %s: %v", category.Code, err)
+			}
+			categoriesInserted++
+		} else {
 			tx.Rollback()
-			return fmt.Errorf("failed to insert stat type category %s: %v", category.Code, err)
+			return fmt.Errorf("failed to check existing stat type category %s: %v", category.Code, err)
 		}
 
-		// Insert translations for this category
+		// Upsert translations for this category
 		if translations, exists := StatTypeCategoryTranslations[category.Code]; exists {
 			for language, name := range translations {
-				translation := StatTypeCategoryTranslationModel{
-					CategoryID: category.ID,
-					Language:   language,
-					Name:       name,
-					CreatedAt:  time.Now(),
-					UpdatedAt:  time.Now(),
-				}
+				var existingTranslation StatTypeCategoryTranslationModel
+				err := tx.Where("category_id = ? AND language = ?", category.ID, language).First(&existingTranslation).Error
 
-				if err := tx.Create(&translation).Error; err != nil {
+				if err == nil {
+					// Translation exists - update it
+					existingTranslation.Name = name
+					existingTranslation.UpdatedAt = time.Now()
+
+					if err := tx.Save(&existingTranslation).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to update translation for category %s (%s): %v", category.Code, language, err)
+					}
+				} else if err == gorm.ErrRecordNotFound {
+					// Translation doesn't exist - create it
+					translation := StatTypeCategoryTranslationModel{
+						CategoryID: category.ID,
+						Language:   language,
+						Name:       name,
+						CreatedAt:  time.Now(),
+						UpdatedAt:  time.Now(),
+					}
+
+					if err := tx.Create(&translation).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to insert translation for category %s (%s): %v", category.Code, language, err)
+					}
+				} else {
 					tx.Rollback()
-					return fmt.Errorf("failed to insert translation for category %s (%s): %v", category.Code, language, err)
+					return fmt.Errorf("failed to check existing translation for category %s (%s): %v", category.Code, language, err)
 				}
 			}
 		}
 	}
 
-	fmt.Printf("Successfully seeded %d stat type categories\n", len(StatTypeCategorySeedData))
+	fmt.Printf("Successfully processed %d stat type categories (%d inserted, %d updated)\n",
+		categoriesInserted+categoriesUpdated, categoriesInserted, categoriesUpdated)
 
-	// Insert stat types with their hexadecimal IDs
+	statTypesInserted := 0
+	statTypesUpdated := 0
+
+	// Upsert stat types with their hexadecimal IDs
 	for _, statType := range StatTypeSeedData {
-		statTypeModel := StatTypeModel{
-			ID:           statType.ID, // Use the hexadecimal ID directly
-			Code:         statType.Code,
-			CategoryID:   statType.CategoryID,
-			DisplayOrder: statType.DisplayOrder,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
+		var existingStatType StatTypeModel
+		err := tx.Where("id = ?", statType.ID).First(&existingStatType).Error
 
-		if err := tx.Create(&statTypeModel).Error; err != nil {
+		if err == nil {
+			// Stat type exists - update it
+			existingStatType.Code = statType.Code
+			existingStatType.CategoryID = statType.CategoryID
+			existingStatType.DisplayOrder = statType.DisplayOrder
+			existingStatType.UpdatedAt = time.Now()
+
+			if err := tx.Save(&existingStatType).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update stat type %s (0x%x): %v", statType.Code, statType.ID, err)
+			}
+			statTypesUpdated++
+		} else if err == gorm.ErrRecordNotFound {
+			// Stat type doesn't exist - create it
+			statTypeModel := StatTypeModel{
+				ID:           statType.ID,
+				Code:         statType.Code,
+				CategoryID:   statType.CategoryID,
+				DisplayOrder: statType.DisplayOrder,
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+
+			if err := tx.Create(&statTypeModel).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to insert stat type %s (0x%x): %v", statType.Code, statType.ID, err)
+			}
+			statTypesInserted++
+		} else {
 			tx.Rollback()
-			return fmt.Errorf("failed to insert stat type %s (0x%x): %v", statType.Code, statType.ID, err)
+			return fmt.Errorf("failed to check existing stat type %s (0x%x): %v", statType.Code, statType.ID, err)
 		}
 
-		// Insert translations for this stat type
+		// Upsert translations for this stat type
 		if translations, exists := StatTypeTranslations[statType.Code]; exists {
 			for language, name := range translations {
-				translation := StatTypeTranslationModel{
-					StatTypeID: statType.ID,
-					Language:   language,
-					Name:       name,
-					CreatedAt:  time.Now(),
-					UpdatedAt:  time.Now(),
-				}
+				var existingTranslation StatTypeTranslationModel
+				err := tx.Where("stat_type_id = ? AND language = ?", statType.ID, language).First(&existingTranslation).Error
 
-				if err := tx.Create(&translation).Error; err != nil {
+				if err == nil {
+					// Translation exists - update it
+					existingTranslation.Name = name
+					existingTranslation.UpdatedAt = time.Now()
+
+					if err := tx.Save(&existingTranslation).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to update translation for stat type %s (%s): %v", statType.Code, language, err)
+					}
+				} else if err == gorm.ErrRecordNotFound {
+					// Translation doesn't exist - create it
+					translation := StatTypeTranslationModel{
+						StatTypeID: statType.ID,
+						Language:   language,
+						Name:       name,
+						CreatedAt:  time.Now(),
+						UpdatedAt:  time.Now(),
+					}
+
+					if err := tx.Create(&translation).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to insert translation for stat type %s (%s): %v", statType.Code, language, err)
+					}
+				} else {
 					tx.Rollback()
-					return fmt.Errorf("failed to insert translation for stat type %s (%s): %v", statType.Code, language, err)
+					return fmt.Errorf("failed to check existing translation for stat type %s (%s): %v", statType.Code, language, err)
 				}
 			}
 		}
@@ -1147,11 +1569,12 @@ func (ds *DatabaseService) SeedStatTypes() error {
 		return fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
-	fmt.Printf("Successfully seeded %d stat types with translations\n", len(StatTypeSeedData))
+	fmt.Printf("Successfully processed %d stat types (%d inserted, %d updated) with translations\n",
+		statTypesInserted+statTypesUpdated, statTypesInserted, statTypesUpdated)
 	return nil
 }
 
-// SeedRunes seeds the runes table with predefined rune data
+// SeedRunes seeds the runes table with predefined rune data using upsert logic
 func (ds *DatabaseService) SeedRunes() error {
 	fmt.Println("Seeding runes...")
 
