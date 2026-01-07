@@ -554,13 +554,13 @@ var RuneSeedData = []RuneModel{
 	{ID: 48, Code: "chasse", StatTypeID: 0x31b, Tier: RuneTierBa, Weight: 5, PowerValue: 1, ItemAnkaID: 10057},
 
 	// Rune Trap Damage
-	{ID: 49, Code: "pi", StatTypeID: 0x65, Tier: RuneTierBa, Weight: RuneWeightDoPi, PowerValue: 1, ItemAnkaID: 7446},
-	{ID: 50, Code: "pa_pi", StatTypeID: 0x65, Tier: RuneTierPa, Weight: RuneWeightDoPi, PowerValue: 3, ItemAnkaID: 10613},
+	{ID: 49, Code: "pi", StatTypeID: 0xe1, Tier: RuneTierBa, Weight: RuneWeightDoPi, PowerValue: 1, ItemAnkaID: 7446},
+	{ID: 50, Code: "pa_pi", StatTypeID: 0xe1, Tier: RuneTierPa, Weight: RuneWeightDoPi, PowerValue: 3, ItemAnkaID: 10613},
 
 	// Rune Pi Per (AP reduction %)
-	{ID: 51, Code: "pi_per", StatTypeID: 0x65, Tier: RuneTierBa, Weight: RuneWeightDoPer, PowerValue: 1, ItemAnkaID: 7447},
-	{ID: 52, Code: "pa_pi_per", StatTypeID: 0x65, Tier: RuneTierPa, Weight: RuneWeightDoPer, PowerValue: 3, ItemAnkaID: 10615},
-	{ID: 53, Code: "ra_pi_per", StatTypeID: 0x65, Tier: RuneTierRa, Weight: RuneWeightDoPer, PowerValue: 10, ItemAnkaID: 10616},
+	{ID: 51, Code: "pi_per", StatTypeID: 0xe2, Tier: RuneTierBa, Weight: RuneWeightDoPer, PowerValue: 1, ItemAnkaID: 7447},
+	{ID: 52, Code: "pa_pi_per", StatTypeID: 0xe2, Tier: RuneTierPa, Weight: RuneWeightDoPer, PowerValue: 3, ItemAnkaID: 10615},
+	{ID: 53, Code: "ra_pi_per", StatTypeID: 0xe2, Tier: RuneTierRa, Weight: RuneWeightDoPer, PowerValue: 10, ItemAnkaID: 10616},
 }
 
 // AP rune drop chances by item level (level -> percentage)
