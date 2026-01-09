@@ -1882,15 +1882,6 @@ func (ds *DatabaseService) CountAdminUsers() (int64, error) {
 	return count, nil
 }
 
-// UsernameExists checks if a username is already taken (no longer needed for uniqueness, kept for reference)
-func (ds *DatabaseService) UsernameExists(username string) (bool, error) {
-	var count int64
-	if err := ds.db.Model(&UserModel{}).Where("username = ?", username).Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 // EmailExists checks if an email is already taken
 func (ds *DatabaseService) EmailExists(email string) (bool, error) {
 	if email == "" {
