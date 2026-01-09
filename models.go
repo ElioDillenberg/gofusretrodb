@@ -661,3 +661,34 @@ func GetMPRuneDropChance(level int) float64 {
 	}
 	return 0
 }
+
+// UserModel represents a user in the system
+type UserModel struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	Username     string     `json:"username" gorm:"size:100;not null"`
+	Email        string     `json:"email" gorm:"size:255;uniqueIndex;not null"`
+	PasswordHash string     `json:"-" gorm:"size:255;not null"` // Never expose in JSON
+	IsAdmin      bool       `json:"is_admin" gorm:"default:false"`
+	IsDeleted    bool       `json:"is_deleted" gorm:"default:false"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	DeletedAt    *time.Time `json:"deleted_at"`
+}
+
+func (UserModel) TableName() string {
+	return "users"
+}
+
+// SessionModel represents a user session
+type SessionModel struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Token     string    `json:"token" gorm:"size:255;uniqueIndex;not null"`
+	UserID    uint      `json:"user_id" gorm:"not null"`
+	ExpiresAt time.Time `json:"expires_at" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at"`
+	User      UserModel `json:"user" gorm:"foreignKey:UserID"`
+}
+
+func (SessionModel) TableName() string {
+	return "sessions"
+}

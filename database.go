@@ -89,6 +89,8 @@ func (ds *DatabaseService) initSchema() error {
 		&RecipeModel{},
 		&IngredientModel{},
 		&RuneModel{},
+		&UserModel{},
+		&SessionModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
@@ -1753,4 +1755,150 @@ func (ds *DatabaseService) UpdateRuneItemAnkaIDs(runeItemMap map[string]int) err
 
 	fmt.Printf("Successfully updated ItemAnkaIDs for %d runes\n", len(runeItemMap))
 	return nil
+}
+
+// ==================== User Management ====================
+
+// CreateUser creates a new user in the database
+func (ds *DatabaseService) CreateUser(username, email, passwordHash string, isAdmin bool) (*UserModel, error) {
+	user := &UserModel{
+		Username:     username,
+		Email:        email,
+		PasswordHash: passwordHash,
+		IsAdmin:      isAdmin,
+		IsDeleted:    false,
+	}
+
+	if err := ds.db.Create(user).Error; err != nil {
+		return nil, fmt.Errorf("failed to create user: %v", err)
+	}
+
+	return user, nil
+}
+
+// GetUserByUsername retrieves a user by their username
+func (ds *DatabaseService) GetUserByUsername(username string) (*UserModel, error) {
+	var user UserModel
+	if err := ds.db.Where("username = ? AND is_deleted = ?", username, false).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetUserByEmail retrieves a user by their email
+func (ds *DatabaseService) GetUserByEmail(email string) (*UserModel, error) {
+	var user UserModel
+	if err := ds.db.Where("email = ? AND is_deleted = ?", email, false).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetUserByID retrieves a user by their ID
+func (ds *DatabaseService) GetUserByID(id uint) (*UserModel, error) {
+	var user UserModel
+	if err := ds.db.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UpdateUserLastLogin updates the user's last login timestamp
+func (ds *DatabaseService) UpdateUserLastLogin(userID uint) error {
+	now := time.Now()
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("last_login_at", now).Error
+}
+
+// UpdateUserPassword updates the user's password hash
+func (ds *DatabaseService) UpdateUserPassword(userID uint, passwordHash string) error {
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("password_hash", passwordHash).Error
+}
+
+// GetAllUsers retrieves all users (admin function)
+func (ds *DatabaseService) GetAllUsers() ([]UserModel, error) {
+	var users []UserModel
+	if err := ds.db.Order("created_at DESC").Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+// DeleteUser soft-deletes a user by setting is_deleted to true
+func (ds *DatabaseService) DeleteUser(userID uint) error {
+	now := time.Now()
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"is_deleted": true,
+		"deleted_at": now,
+	}).Error
+}
+
+// ==================== Session Management ====================
+
+// CreateSession creates a new session in the database
+func (ds *DatabaseService) CreateSession(token string, userID uint, expiresAt time.Time) (*SessionModel, error) {
+	session := &SessionModel{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}
+
+	if err := ds.db.Create(session).Error; err != nil {
+		return nil, fmt.Errorf("failed to create session: %v", err)
+	}
+
+	return session, nil
+}
+
+// GetSessionByToken retrieves a session and its associated user by token
+func (ds *DatabaseService) GetSessionByToken(token string) (*SessionModel, error) {
+	var session SessionModel
+	if err := ds.db.Preload("User").Where("token = ? AND expires_at > ?", token, time.Now()).First(&session).Error; err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// DeleteSession removes a session from the database
+func (ds *DatabaseService) DeleteSession(token string) error {
+	return ds.db.Where("token = ?", token).Delete(&SessionModel{}).Error
+}
+
+// DeleteExpiredSessions removes all expired sessions
+func (ds *DatabaseService) DeleteExpiredSessions() error {
+	return ds.db.Where("expires_at < ?", time.Now()).Delete(&SessionModel{}).Error
+}
+
+// DeleteUserSessions removes all sessions for a specific user
+func (ds *DatabaseService) DeleteUserSessions(userID uint) error {
+	return ds.db.Where("user_id = ?", userID).Delete(&SessionModel{}).Error
+}
+
+// CountAdminUsers returns the number of admin users
+func (ds *DatabaseService) CountAdminUsers() (int64, error) {
+	var count int64
+	if err := ds.db.Model(&UserModel{}).Where("is_admin = ? AND is_deleted = ?", true, false).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// UsernameExists checks if a username is already taken (no longer needed for uniqueness, kept for reference)
+func (ds *DatabaseService) UsernameExists(username string) (bool, error) {
+	var count int64
+	if err := ds.db.Model(&UserModel{}).Where("username = ?", username).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// EmailExists checks if an email is already taken
+func (ds *DatabaseService) EmailExists(email string) (bool, error) {
+	if email == "" {
+		return false, nil
+	}
+	var count int64
+	if err := ds.db.Model(&UserModel{}).Where("email = ?", email).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
