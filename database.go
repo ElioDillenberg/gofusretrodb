@@ -91,6 +91,8 @@ func (ds *DatabaseService) initSchema() error {
 		&RuneModel{},
 		&UserModel{},
 		&SessionModel{},
+		&WorkshopListModel{},
+		&WorkshopListItemModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
