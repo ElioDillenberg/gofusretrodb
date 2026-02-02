@@ -1,7 +1,14 @@
 package gofusretrodb
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -11,6 +18,166 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// HashEmail creates a SHA-256 hash of an email address with a secret pepper
+// The pepper adds security so even if the database is compromised,
+// the hashes can't be reversed without knowing the pepper
+func HashEmail(email string) string {
+	pepper := os.Getenv("EMAIL_HASH_PEPPER")
+	if pepper == "" {
+		// SECURITY: Fail loudly if pepper is not configured - this is a critical security requirement
+		log.Fatal("SECURITY ERROR: EMAIL_HASH_PEPPER environment variable not set. This is required for secure email hashing.")
+	}
+	if len(pepper) < 32 {
+		log.Fatal("SECURITY ERROR: EMAIL_HASH_PEPPER must be at least 32 characters long")
+	}
+	data := strings.ToLower(email) + pepper
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
+}
+
+// getEncryptionKey returns the 32-byte encryption key from environment
+func getEncryptionKey() ([]byte, error) {
+	key := os.Getenv("EMAIL_ENCRYPTION_KEY")
+	if key == "" {
+		return nil, fmt.Errorf("EMAIL_ENCRYPTION_KEY environment variable not set")
+	}
+	// Key should be 32 bytes (256 bits) for AES-256
+	// If provided as hex string (64 chars), decode it
+	if len(key) == 64 {
+		decoded, err := hex.DecodeString(key)
+		if err != nil {
+			return nil, fmt.Errorf("EMAIL_ENCRYPTION_KEY appears to be hex but failed to decode: %v", err)
+		}
+		return decoded, nil
+	}
+	// If provided as base64 (44 chars for 32 bytes)
+	if len(key) == 44 {
+		decoded, err := base64.StdEncoding.DecodeString(key)
+		if err != nil {
+			return nil, fmt.Errorf("EMAIL_ENCRYPTION_KEY appears to be base64 but failed to decode: %v", err)
+		}
+		if len(decoded) != 32 {
+			return nil, fmt.Errorf("EMAIL_ENCRYPTION_KEY base64 decoded to %d bytes, expected 32", len(decoded))
+		}
+		return decoded, nil
+	}
+	// Reject weak keys - require exactly 32 bytes or proper encoding
+	// SECURITY: Do not silently hash arbitrary keys as this could mask weak key usage
+	if len(key) == 32 {
+		return []byte(key), nil
+	}
+	return nil, fmt.Errorf("EMAIL_ENCRYPTION_KEY must be exactly 32 bytes, 64 hex characters, or 44 base64 characters (got %d chars). Generate with: openssl rand -hex 32", len(key))
+}
+
+// EncryptEmail encrypts an email address using AES-GCM
+func EncryptEmail(email string) (string, error) {
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	// Encrypt and prepend nonce
+	plaintext := []byte(strings.ToLower(email))
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// DecryptEmail decrypts an encrypted email address
+func DecryptEmail(encryptedEmail string) (string, error) {
+	if encryptedEmail == "" {
+		return "", nil
+	}
+
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedEmail)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
+// MaskEmail masks an email address for display (e.g., "john.doe@gmail.com" -> "j******e@gmail.com")
+// Only the local part is masked, domain remains visible
+func MaskEmail(email string) string {
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return "***@***.***"
+	}
+
+	local := parts[0]
+	domain := parts[1]
+
+	// Mask local part: keep first and last char, mask the rest
+	var maskedLocal string
+	if len(local) <= 2 {
+		maskedLocal = local[:1] + "*"
+	} else {
+		maskedLocal = local[:1] + strings.Repeat("*", len(local)-2) + local[len(local)-1:]
+	}
+
+	return maskedLocal + "@" + domain
+}
+
+// GetMaskedEmail decrypts an encrypted email and returns its masked version
+func GetMaskedEmail(encryptedEmail string) string {
+	email, err := DecryptEmail(encryptedEmail)
+	if err != nil || email == "" {
+		return ""
+	}
+	return MaskEmail(email)
+}
+
+// GetDecryptedEmail decrypts an encrypted email and returns it
+func GetDecryptedEmail(encryptedEmail string) string {
+	email, err := DecryptEmail(encryptedEmail)
+	if err != nil {
+		return ""
+	}
+	return email
+}
 
 // DatabaseService handles database operations
 type DatabaseService struct {
@@ -91,6 +258,10 @@ func (ds *DatabaseService) initSchema() error {
 		&RuneModel{},
 		&UserModel{},
 		&SessionModel{},
+		&MagicLinkModel{},
+		&PasskeyCredentialModel{},
+		&WebAuthnChallengeModel{},
+		&OAuthStateModel{},
 		&WorkshopListModel{},
 		&WorkshopListItemModel{},
 	)
@@ -360,48 +531,6 @@ func (ds *DatabaseService) GetItemsByLanguage(language string) ([]map[string]int
 	return items, nil
 }
 
-//func (ds *DatabaseService) GetItemsSearch(search string, language string, typeAnkaIDs []int) ([]ItemModel, error) {
-//	var items []ItemModel
-//	var err error
-//
-//	trimmedSearch := strings.TrimSpace(search)
-//
-//	// Handle empty search - return empty result or limit results
-//	if trimmedSearch == "" {
-//		query := ds.db.Preload("Translations", "language = ?", language).
-//			Preload("Recipe.Ingredients.Item.Translations").
-//			Joins("JOIN item_translations it ON items.id = it.item_id").
-//			Limit(50)
-//
-//		// Add type filter if provided
-//		if len(typeAnkaIDs) > 0 {
-//			query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
-//		}
-//
-//		err = query.Find(&items).Error
-//		return items, err
-//	}
-//
-//	query := ds.db.Preload("Translations", "language = ?", language).
-//		Preload("Type.Translations", "language = ?", language).
-//		Preload("Recipe.Ingredients.Item.Translations", "language = ?", language).
-//		Joins("JOIN item_translations it ON items.id = it.item_id").
-//		Where("it.language = ? AND LOWER(it.name) LIKE LOWER(?)", language, "%"+trimmedSearch+"%")
-//
-//	// Add type filter if provided
-//	if len(typeAnkaIDs) > 0 {
-//		query = query.Where("items.type_anka_id IN ?", typeAnkaIDs)
-//	}
-//
-//	err = query.Find(&items).Error
-//
-//	if err != nil {
-//		return nil, fmt.Errorf("failed to search items: %v", err)
-//	}
-//
-//	return items, nil
-//}
-
 // ItemSearchFilters contains all filter options for item search
 type ItemSearchFilters struct {
 	SearchValue   string
@@ -493,9 +622,12 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 		query = query.Where("LOWER(it.name) LIKE LOWER(?)", "%"+trimmedSearch+"%")
 
 		// Priority sorting: items starting with search term come first
-		query = query.Order(fmt.Sprintf(
-			"CASE WHEN LOWER(it.name) LIKE LOWER('%s%%') THEN 0 ELSE 1 END",
-			strings.ReplaceAll(trimmedSearch, "'", "''"), // Escape single quotes for SQL safety
+		// SECURITY: Use gorm.Expr with parameterized query to prevent SQL injection
+		// The search term is passed as a parameter, not interpolated into the SQL string
+		searchPattern := trimmedSearch + "%"
+		query = query.Order(gorm.Expr(
+			"CASE WHEN LOWER(it.name) LIKE LOWER(?) THEN 0 ELSE 1 END",
+			searchPattern,
 		))
 	}
 
@@ -1761,14 +1893,18 @@ func (ds *DatabaseService) UpdateRuneItemAnkaIDs(runeItemMap map[string]int) err
 
 // ==================== User Management ====================
 
-// CreateUser creates a new user in the database
-func (ds *DatabaseService) CreateUser(username, email, passwordHash string, isAdmin bool) (*UserModel, error) {
+// CreateUser creates a new user in the database (for magic link flow, username is set later)
+func (ds *DatabaseService) CreateUser(email string, isAdmin bool) (*UserModel, error) {
+	encryptedEmail, err := EncryptEmail(email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt email: %v", err)
+	}
+
 	user := &UserModel{
-		Username:     username,
-		Email:        email,
-		PasswordHash: passwordHash,
-		IsAdmin:      isAdmin,
-		IsDeleted:    false,
+		EmailHash:      HashEmail(email),
+		EncryptedEmail: encryptedEmail,
+		IsAdmin:        isAdmin,
+		IsDeleted:      false,
 	}
 
 	if err := ds.db.Create(user).Error; err != nil {
@@ -1787,10 +1923,10 @@ func (ds *DatabaseService) GetUserByUsername(username string) (*UserModel, error
 	return &user, nil
 }
 
-// GetUserByEmail retrieves a user by their email
+// GetUserByEmail retrieves a user by their email hash
 func (ds *DatabaseService) GetUserByEmail(email string) (*UserModel, error) {
 	var user UserModel
-	if err := ds.db.Where("email = ? AND is_deleted = ?", email, false).First(&user).Error; err != nil {
+	if err := ds.db.Where("email_hash = ? AND is_deleted = ?", HashEmail(email), false).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil
@@ -1808,12 +1944,24 @@ func (ds *DatabaseService) GetUserByID(id uint) (*UserModel, error) {
 // UpdateUserLastLogin updates the user's last login timestamp
 func (ds *DatabaseService) UpdateUserLastLogin(userID uint) error {
 	now := time.Now()
-	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("last_login_at", now).Error
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("updated_at", now).Error
 }
 
-// UpdateUserPassword updates the user's password hash
-func (ds *DatabaseService) UpdateUserPassword(userID uint, passwordHash string) error {
-	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("password_hash", passwordHash).Error
+// SetUsername sets the username for a user (first-time setup)
+func (ds *DatabaseService) SetUsername(userID uint, username string) error {
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("username", username).Error
+}
+
+// UsernameExists checks if a username is already taken
+func (ds *DatabaseService) UsernameExists(username string) (bool, error) {
+	if username == "" {
+		return false, nil
+	}
+	var count int64
+	if err := ds.db.Model(&UserModel{}).Where("username = ? AND is_deleted = ?", username, false).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // GetAllUsers retrieves all users (admin function)
@@ -1825,13 +1973,59 @@ func (ds *DatabaseService) GetAllUsers() ([]UserModel, error) {
 	return users, nil
 }
 
-// DeleteUser soft-deletes a user by setting is_deleted to true
-func (ds *DatabaseService) DeleteUser(userID uint) error {
-	now := time.Now()
-	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Updates(map[string]interface{}{
-		"is_deleted": true,
-		"deleted_at": now,
-	}).Error
+// HardDeleteUser permanently removes a user and all their associated data
+func (ds *DatabaseService) HardDeleteUser(userID uint) error {
+	// Start a transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	// Delete all workshop list items for user's lists
+	var workshopLists []WorkshopListModel
+	if err := tx.Where("user_id = ?", userID).Find(&workshopLists).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to fetch workshop lists: %v", err)
+	}
+
+	for _, list := range workshopLists {
+		if err := tx.Where("workshop_list_id = ?", list.ID).Delete(&WorkshopListItemModel{}).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to delete workshop list items: %v", err)
+		}
+	}
+
+	// Delete all workshop lists
+	if err := tx.Where("user_id = ?", userID).Delete(&WorkshopListModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete workshop lists: %v", err)
+	}
+
+	// Delete all passkey credentials
+	if err := tx.Where("user_id = ?", userID).Delete(&PasskeyCredentialModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete passkey credentials: %v", err)
+	}
+
+	// Delete all sessions
+	if err := tx.Where("user_id = ?", userID).Delete(&SessionModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete sessions: %v", err)
+	}
+
+	// Delete all magic links
+	if err := tx.Where("user_id = ?", userID).Delete(&MagicLinkModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete magic links: %v", err)
+	}
+
+	// Delete the user
+	if err := tx.Delete(&UserModel{}, userID).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete user: %v", err)
+	}
+
+	return tx.Commit().Error
 }
 
 // ==================== Session Management ====================
@@ -1894,4 +2088,237 @@ func (ds *DatabaseService) EmailExists(email string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// ==================== Magic Link Management ====================
+
+// CreateMagicLink creates a new magic link token
+func (ds *DatabaseService) CreateMagicLink(token, email string, userID *uint, expiresAt time.Time) (*MagicLinkModel, error) {
+	magicLink := &MagicLinkModel{
+		Token:     token,
+		Email:     email,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	if err := ds.db.Create(magicLink).Error; err != nil {
+		return nil, fmt.Errorf("failed to create magic link: %v", err)
+	}
+
+	return magicLink, nil
+}
+
+// GetMagicLinkByToken retrieves a magic link by its token
+func (ds *DatabaseService) GetMagicLinkByToken(token string) (*MagicLinkModel, error) {
+	var magicLink MagicLinkModel
+	if err := ds.db.Preload("User").Where("token = ? AND used = ? AND expires_at > ?", token, false, time.Now()).First(&magicLink).Error; err != nil {
+		return nil, err
+	}
+	return &magicLink, nil
+}
+
+// MarkMagicLinkUsed marks a magic link as used
+func (ds *DatabaseService) MarkMagicLinkUsed(token string) error {
+	return ds.db.Model(&MagicLinkModel{}).Where("token = ?", token).Update("used", true).Error
+}
+
+// DeleteExpiredMagicLinks removes all expired magic links
+func (ds *DatabaseService) DeleteExpiredMagicLinks() error {
+	return ds.db.Where("expires_at < ? OR used = ?", time.Now(), true).Delete(&MagicLinkModel{}).Error
+}
+
+// ==================== Passkey Credential Management ====================
+
+// CreatePasskeyCredential stores a new passkey credential
+func (ds *DatabaseService) CreatePasskeyCredential(userID uint, credentialID, publicKey, aaguid []byte, name string, backupEligible, backupState bool) (*PasskeyCredentialModel, error) {
+	credential := &PasskeyCredentialModel{
+		UserID:         userID,
+		CredentialID:   credentialID,
+		PublicKey:      publicKey,
+		AAGUID:         aaguid,
+		SignCount:      0,
+		BackupEligible: backupEligible,
+		BackupState:    backupState,
+		Name:           name,
+	}
+
+	if err := ds.db.Create(credential).Error; err != nil {
+		return nil, fmt.Errorf("failed to create passkey credential: %v", err)
+	}
+
+	return credential, nil
+}
+
+// GetPasskeyCredentialsByUserID retrieves all passkey credentials for a user
+func (ds *DatabaseService) GetPasskeyCredentialsByUserID(userID uint) ([]PasskeyCredentialModel, error) {
+	var credentials []PasskeyCredentialModel
+	if err := ds.db.Where("user_id = ?", userID).Find(&credentials).Error; err != nil {
+		return nil, err
+	}
+	return credentials, nil
+}
+
+// GetPasskeyCredentialByCredentialID retrieves a passkey credential by its credential ID
+func (ds *DatabaseService) GetPasskeyCredentialByCredentialID(credentialID []byte) (*PasskeyCredentialModel, error) {
+	var credential PasskeyCredentialModel
+	if err := ds.db.Preload("User").Where("credential_id = ?", credentialID).First(&credential).Error; err != nil {
+		return nil, err
+	}
+	return &credential, nil
+}
+
+// UpdatePasskeySignCount updates the sign count for a passkey credential
+func (ds *DatabaseService) UpdatePasskeySignCount(credentialID []byte, signCount uint32) error {
+	return ds.db.Model(&PasskeyCredentialModel{}).Where("credential_id = ?", credentialID).Update("sign_count", signCount).Error
+}
+
+// DeletePasskeyCredential removes a passkey credential
+func (ds *DatabaseService) DeletePasskeyCredential(id uint, userID uint) error {
+	return ds.db.Where("id = ? AND user_id = ?", id, userID).Delete(&PasskeyCredentialModel{}).Error
+}
+
+// DeletePasskeyCredentialsByAAGUID removes all passkey credentials for a user with a specific AAGUID
+// This is used to clean up old credentials when a new one is registered on the same authenticator
+func (ds *DatabaseService) DeletePasskeyCredentialsByAAGUID(userID uint, aaguid []byte, excludeCredentialID []byte) error {
+	return ds.db.Where("user_id = ? AND aa_guid = ? AND credential_id != ?", userID, aaguid, excludeCredentialID).Delete(&PasskeyCredentialModel{}).Error
+}
+
+// GetUserByCredentialID retrieves a user by their passkey credential ID
+func (ds *DatabaseService) GetUserByCredentialID(credentialID []byte) (*UserModel, error) {
+	var credential PasskeyCredentialModel
+	if err := ds.db.Preload("User").Where("credential_id = ?", credentialID).First(&credential).Error; err != nil {
+		return nil, err
+	}
+	return &credential.User, nil
+}
+
+// UserHasPasskeys checks if a user has any registered passkeys
+func (ds *DatabaseService) UserHasPasskeys(userID uint) (bool, error) {
+	var count int64
+	if err := ds.db.Model(&PasskeyCredentialModel{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// ==================== WebAuthn Challenge Management ====================
+
+// CreateWebAuthnChallenge stores a challenge for a WebAuthn ceremony
+func (ds *DatabaseService) CreateWebAuthnChallenge(sessionID string, challenge []byte, userID *uint, challengeType string, expiresAt time.Time) (*WebAuthnChallengeModel, error) {
+	// Delete any existing challenge for this session first
+	ds.db.Where("session_id = ?", sessionID).Delete(&WebAuthnChallengeModel{})
+
+	webAuthnChallenge := &WebAuthnChallengeModel{
+		SessionID: sessionID,
+		Challenge: challenge,
+		UserID:    userID,
+		Type:      challengeType,
+		ExpiresAt: expiresAt,
+	}
+
+	if err := ds.db.Create(webAuthnChallenge).Error; err != nil {
+		return nil, fmt.Errorf("failed to create webauthn challenge: %v", err)
+	}
+
+	return webAuthnChallenge, nil
+}
+
+// GetWebAuthnChallenge retrieves a challenge by session ID
+func (ds *DatabaseService) GetWebAuthnChallenge(sessionID string) (*WebAuthnChallengeModel, error) {
+	var challenge WebAuthnChallengeModel
+	if err := ds.db.Where("session_id = ? AND expires_at > ?", sessionID, time.Now()).First(&challenge).Error; err != nil {
+		return nil, err
+	}
+	return &challenge, nil
+}
+
+// DeleteWebAuthnChallenge removes a challenge by session ID
+func (ds *DatabaseService) DeleteWebAuthnChallenge(sessionID string) error {
+	return ds.db.Where("session_id = ?", sessionID).Delete(&WebAuthnChallengeModel{}).Error
+}
+
+// DeleteExpiredChallenges removes all expired WebAuthn challenges
+func (ds *DatabaseService) DeleteExpiredChallenges() error {
+	return ds.db.Where("expires_at < ?", time.Now()).Delete(&WebAuthnChallengeModel{}).Error
+}
+
+// ==================== OAuth State Management ====================
+
+// CreateOAuthState creates a new OAuth state for CSRF protection
+func (ds *DatabaseService) CreateOAuthState(state, provider, redirectURL string, expiresAt time.Time) (*OAuthStateModel, error) {
+	oauthState := &OAuthStateModel{
+		State:       state,
+		Provider:    provider,
+		RedirectURL: redirectURL,
+		ExpiresAt:   expiresAt,
+	}
+
+	if err := ds.db.Create(oauthState).Error; err != nil {
+		return nil, fmt.Errorf("failed to create oauth state: %v", err)
+	}
+
+	return oauthState, nil
+}
+
+// GetOAuthState retrieves and validates an OAuth state
+func (ds *DatabaseService) GetOAuthState(state string) (*OAuthStateModel, error) {
+	var oauthState OAuthStateModel
+	if err := ds.db.Where("state = ? AND expires_at > ?", state, time.Now()).First(&oauthState).Error; err != nil {
+		return nil, err
+	}
+	return &oauthState, nil
+}
+
+// DeleteOAuthState removes an OAuth state after use
+func (ds *DatabaseService) DeleteOAuthState(state string) error {
+	return ds.db.Where("state = ?", state).Delete(&OAuthStateModel{}).Error
+}
+
+// DeleteExpiredOAuthStates removes all expired OAuth states
+func (ds *DatabaseService) DeleteExpiredOAuthStates() error {
+	return ds.db.Where("expires_at < ?", time.Now()).Delete(&OAuthStateModel{}).Error
+}
+
+// ==================== Discord User Management ====================
+
+// GetUserByDiscordID retrieves a user by their Discord ID
+func (ds *DatabaseService) GetUserByDiscordID(discordID string) (*UserModel, error) {
+	var user UserModel
+	if err := ds.db.Where("discord_id = ? AND is_deleted = ?", discordID, false).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// CreateUserWithDiscord creates a new user with Discord OAuth
+func (ds *DatabaseService) CreateUserWithDiscord(email, discordID string, isAdmin bool) (*UserModel, error) {
+	encryptedEmail, err := EncryptEmail(email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt email: %v", err)
+	}
+
+	user := &UserModel{
+		EmailHash:      HashEmail(email),
+		EncryptedEmail: encryptedEmail,
+		DiscordID:      &discordID,
+		IsAdmin:        isAdmin,
+		IsDeleted:      false,
+	}
+
+	if err := ds.db.Create(user).Error; err != nil {
+		return nil, fmt.Errorf("failed to create user: %v", err)
+	}
+
+	return user, nil
+}
+
+// LinkDiscordToUser links a Discord account to an existing user
+func (ds *DatabaseService) LinkDiscordToUser(userID uint, discordID string) error {
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("discord_id", discordID).Error
+}
+
+// UnlinkDiscordFromUser removes Discord linking from a user
+func (ds *DatabaseService) UnlinkDiscordFromUser(userID uint) error {
+	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("discord_id", nil).Error
 }

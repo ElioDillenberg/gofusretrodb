@@ -664,15 +664,16 @@ func GetMPRuneDropChance(level int) float64 {
 
 // UserModel represents a user in the system
 type UserModel struct {
-	ID           uint       `json:"id" gorm:"primaryKey"`
-	Username     string     `json:"username" gorm:"size:100;not null"`
-	Email        string     `json:"email" gorm:"size:255;uniqueIndex;not null"`
-	PasswordHash string     `json:"-" gorm:"size:255;not null"` // Never expose in JSON
-	IsAdmin      bool       `json:"is_admin" gorm:"default:false"`
-	IsDeleted    bool       `json:"is_deleted" gorm:"default:false"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"deleted_at"`
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	Username       *string    `json:"username" gorm:"size:100;uniqueIndex"`           // Optional, can be set later in settings
+	EmailHash      string     `json:"email_hash" gorm:"size:64;uniqueIndex;not null"` // SHA-256 hash of email for lookups
+	EncryptedEmail string     `json:"encrypted_email" gorm:"size:255"`                // AES-GCM encrypted email for when we need to use it
+	DiscordID      *string    `json:"discord_id" gorm:"size:20;uniqueIndex"`          // Discord user ID for OAuth linking
+	IsAdmin        bool       `json:"is_admin" gorm:"default:false"`
+	IsDeleted      bool       `json:"is_deleted" gorm:"default:false"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	DeletedAt      *time.Time `json:"deleted_at"`
 }
 
 func (UserModel) TableName() string {
@@ -691,4 +692,68 @@ type SessionModel struct {
 
 func (SessionModel) TableName() string {
 	return "sessions"
+}
+
+// MagicLinkModel represents a magic link for passwordless authentication
+type MagicLinkModel struct {
+	ID        uint       `json:"id" gorm:"primaryKey"`
+	Token     string     `json:"token" gorm:"size:255;uniqueIndex;not null"`
+	Email     string     `json:"email" gorm:"size:255;not null;index"`
+	UserID    *uint      `json:"user_id" gorm:"index"` // Nullable for new users
+	ExpiresAt time.Time  `json:"expires_at" gorm:"not null"`
+	Used      bool       `json:"used" gorm:"default:false"`
+	CreatedAt time.Time  `json:"created_at"`
+	User      *UserModel `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+func (MagicLinkModel) TableName() string {
+	return "magic_links"
+}
+
+// PasskeyCredentialModel represents a WebAuthn passkey credential
+type PasskeyCredentialModel struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	UserID         uint      `json:"user_id" gorm:"not null;index"`
+	CredentialID   []byte    `json:"credential_id" gorm:"type:bytea;uniqueIndex;not null"` // Unique credential identifier
+	PublicKey      []byte    `json:"public_key" gorm:"type:bytea;not null"`                // COSE-encoded public key
+	AAGUID         []byte    `json:"aa_guid" gorm:"type:bytea"`                            // Authenticator attestation GUID
+	SignCount      uint32    `json:"sign_count" gorm:"default:0"`                          // Signature counter for clone detection
+	BackupEligible bool      `json:"backup_eligible" gorm:"default:false"`                 // Whether credential can be backed up
+	BackupState    bool      `json:"backup_state" gorm:"default:false"`                    // Whether credential is currently backed up
+	Name           string    `json:"name" gorm:"size:100;not null"`                        // User-provided name (e.g., "MacBook Pro")
+	CreatedAt      time.Time `json:"created_at"`
+	User           UserModel `json:"user" gorm:"foreignKey:UserID"`
+}
+
+func (PasskeyCredentialModel) TableName() string {
+	return "passkey_credentials"
+}
+
+// WebAuthnChallengeModel stores temporary challenges for WebAuthn ceremonies
+type WebAuthnChallengeModel struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	SessionID string    `json:"session_id" gorm:"size:255;uniqueIndex;not null"` // Temporary session ID for the ceremony
+	Challenge []byte    `json:"challenge" gorm:"type:bytea;not null"`            // The random challenge bytes
+	UserID    *uint     `json:"user_id" gorm:"index"`                            // User ID (for registration, nullable for login)
+	Type      string    `json:"type" gorm:"size:20;not null"`                    // "registration" or "login"
+	ExpiresAt time.Time `json:"expires_at" gorm:"not null"`                      // 5 minute expiry
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (WebAuthnChallengeModel) TableName() string {
+	return "webauthn_challenges"
+}
+
+// OAuthStateModel stores temporary OAuth state for CSRF protection
+type OAuthStateModel struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	State       string    `json:"state" gorm:"size:64;uniqueIndex;not null"` // Random state parameter
+	Provider    string    `json:"provider" gorm:"size:20;not null"`          // "discord", "google", etc.
+	RedirectURL string    `json:"redirect_url" gorm:"size:255"`              // Where to redirect after auth
+	ExpiresAt   time.Time `json:"expires_at" gorm:"not null"`                // 10 minute expiry
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (OAuthStateModel) TableName() string {
+	return "oauth_states"
 }
