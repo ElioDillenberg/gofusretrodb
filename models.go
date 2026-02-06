@@ -67,14 +67,45 @@ func (ItemTranslationModel) TableName() string {
 }
 
 type ItemTypeModel struct {
-	ID           uint                       `json:"id" gorm:"primaryKey"`
-	AnkaId       int                        `json:"anka_id" gorm:"uniqueIndex;default:0"` // Original SWF type ID
-	KeyName      string                     `json:"key_name" gorm:"size:50"`
-	Translations []ItemTypeTranslationModel `json:"translations" gorm:"foreignKey:ItemTypeID"`
+	ID             uint                       `json:"id" gorm:"primaryKey"`
+	AnkaId         int                        `json:"anka_id" gorm:"uniqueIndex;default:0"` // Original SWF type ID
+	KeyName        string                     `json:"key_name" gorm:"size:50"`
+	AuctionHouseID *uint                      `json:"auction_house_id" gorm:"index"`
+	AuctionHouse   *AuctionHouseModel         `json:"auction_house,omitempty" gorm:"foreignKey:AuctionHouseID"`
+	Translations   []ItemTypeTranslationModel `json:"translations" gorm:"foreignKey:ItemTypeID"`
 }
 
 func (ItemTypeModel) TableName() string {
 	return "item_types"
+}
+
+// AuctionHouseModel represents an in-game auction house location
+type AuctionHouseModel struct {
+	ID           uint                           `json:"id" gorm:"primaryKey"`
+	Code         string                         `json:"code" gorm:"size:50;uniqueIndex;not null"`
+	DisplayOrder int                            `json:"display_order" gorm:"default:0"`
+	CreatedAt    time.Time                      `json:"created_at"`
+	UpdatedAt    time.Time                      `json:"updated_at"`
+	Translations []AuctionHouseTranslationModel `json:"translations" gorm:"foreignKey:AuctionHouseID"`
+}
+
+func (AuctionHouseModel) TableName() string {
+	return "auction_houses"
+}
+
+// AuctionHouseTranslationModel represents auction house names in different languages
+type AuctionHouseTranslationModel struct {
+	ID             uint              `json:"id" gorm:"primaryKey"`
+	AuctionHouseID uint              `json:"auction_house_id" gorm:"not null"`
+	Language       string            `json:"language" gorm:"size:5;not null"`
+	Name           string            `json:"name" gorm:"size:255;not null"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	AuctionHouse   AuctionHouseModel `json:"auction_house" gorm:"foreignKey:AuctionHouseID"`
+}
+
+func (AuctionHouseTranslationModel) TableName() string {
+	return "auction_house_translations"
 }
 
 type ItemTypeTranslationModel struct {
@@ -398,6 +429,120 @@ var StatTypeTranslations = map[string]map[string]string{
 	"damage":                 {"fr": "Dommages", "en": "Damage", "es": "Daño"},
 	"damage_percent":         {"fr": "Dommages (%)", "en": "Damage (%)", "es": "Daño (%)"},
 	"final_damage":           {"fr": "Dommages finaux", "en": "Final damage", "es": "Daño final"},
+}
+
+// AuctionHouseSeedData contains the reference data for auction houses
+// These represent the different Hôtel de vente (Hôtel de Vente) locations in-game
+var AuctionHouseSeedData = []AuctionHouseModel{
+	{ID: 1, Code: "resources", DisplayOrder: 1},
+	{ID: 2, Code: "alchemist", DisplayOrder: 2},
+	{ID: 3, Code: "jeweller", DisplayOrder: 3},
+	{ID: 4, Code: "butcher&hunter", DisplayOrder: 4},
+	{ID: 5, Code: "baker", DisplayOrder: 5},
+	{ID: 6, Code: "handymen", DisplayOrder: 6},
+	{ID: 7, Code: "lumberjack", DisplayOrder: 7},
+	{ID: 8, Code: "shoemaker", DisplayOrder: 8},
+	{ID: 9, Code: "documents", DisplayOrder: 9},
+	{ID: 10, Code: "blacksmith", DisplayOrder: 10},
+	{ID: 11, Code: "miners", DisplayOrder: 11},
+	{ID: 12, Code: "linkedparchments", DisplayOrder: 12},
+	{ID: 13, Code: "farmer", DisplayOrder: 13},
+	{ID: 14, Code: "fishermen&fishmonger", DisplayOrder: 14},
+	{ID: 15, Code: "runes", DisplayOrder: 15},
+	{ID: 16, Code: "carver", DisplayOrder: 16},
+	{ID: 17, Code: "tailor", DisplayOrder: 17},
+	{ID: 18, Code: "souls", DisplayOrder: 18},
+	{ID: 19, Code: "animals", DisplayOrder: 19},
+	{ID: 20, Code: "shields", DisplayOrder: 19},
+}
+
+// AuctionHouseTranslations contains multilingual translations for auction houses
+var AuctionHouseTranslations = map[string]map[string]string{
+	"resources":            {"fr": "Hôtel de vente des ressources", "en": "Resource Market", "es": "Mercadillo de recursos"},
+	"alchemist":            {"fr": "Hôtel de vente des alchimistes", "en": "Alchemists' Market", "es": "Mercadillo de alquimistas"},
+	"jeweller":             {"fr": "Hôtel de vente des bijoutiers", "en": "Jewellers' Market", "es": "Mercadillo de joyeros"},
+	"butcher&hunter":       {"fr": "Hôtel de vente des bouchers et des chasseurs", "en": "Butchers and Hunters' Market", "es": "Mercadillo de carniceros y cazadores"},
+	"baker":                {"fr": "Hôtel de vente des boulangers", "en": "Bakers' Market", "es": "Mercadillo de panaderos"},
+	"handymen":             {"fr": "Hôtel de vente des bricoleurs", "en": "Handymens' Market", "es": "Mercadillo de manitas"},
+	"lumberjack":           {"fr": "Hôtel de vente des bûcherons", "en": "Lumberjacks' Market", "es": "Mercadillo de leñadores"},
+	"shoemaker":            {"fr": "Hôtel de vente des cordonniers", "en": "Shoemakers' Market", "es": "Mercadillo de zapateros"},
+	"documents":            {"fr": "Hôtel de vente des documents", "en": "Scroll Market", "es": "Mercadillo de documentos"},
+	"blacksmith":           {"fr": "Hôtel de vente des forgerons", "en": "Smiths' Market", "es": "Mercadillo de herreros"},
+	"miners":               {"fr": "Hôtel de vente des mineurs", "en": "Miners' Market", "es": "Mercadillo de mineros"},
+	"linkedparchments":     {"fr": "Hôtel de vente des parchemins liés", "en": "Linked Scroll Market", "es": "Mercadillo de pergaminos ligados"},
+	"farmer":               {"fr": "Hôtel de vente des paysans", "en": "Farmers' Market", "es": "Mercadillo de campesinos"},
+	"fishermen&fishmonger": {"fr": "Hôtel de vente des poissoniers et des pêcheurs", "en": "Fishermen and Fishmongers' Market", "es": "Mercadillo de pescaderos y pescadores"},
+	"runes":                {"fr": "Hôtel de vente des runes", "en": "Rune Market", "es": "Mercadillo de runas"},
+	"carver":               {"fr": "Hôtel de vente des sculpteurs", "en": "Carvers' Market", "es": "Mercadillo de escultores"},
+	"tailor":               {"fr": "Hôtel de vente des tailleurs", "en": "Tailors' Market", "es": "Mercadillo de sastres"},
+	"souls":                {"fr": "Hôtel de vente des âmes", "en": "Soul Market", "es": "Mercadillo de almas"},
+	"animals":              {"fr": "Hôtel de vente des animaux", "en": "Pet Market", "es": "Mercadillo de animales"},
+	"shields":              {"fr": "Hôtel de vente des boucliers", "en": "Shield Market", "es": "Mercadillo de escudos"},
+}
+
+// AuctionHouseItemTypeMapping maps auction house codes to ItemType.AnkaId values
+// Fill in the AnkaIds for each auction house based on which item types are sold there
+var AuctionHouseItemTypeMapping = map[string][]int{
+	"resources": {
+		15, 35, 36, 46, 47, 48, 53, 54, 55, 56, 57, 58, 59, 65, 68, 103, 104, 105, 106, 107, 109, 110, 111,
+	},
+	"alchemist": {
+		12, 14, 26, 43, 44, 45, 66, 70, 71, 74, 86,
+	},
+	"jeweller": {
+		1, 9,
+	},
+	"butcher&hunter": {
+		63, 64, 69,
+	},
+	"baker": {
+		33, 42,
+	},
+	"handymen": {
+		84, 93, 112,
+	},
+	"lumberjack": {
+		38, 95, 96, 98, 108,
+	},
+	"shoemaker": {
+		10, 11,
+	},
+	"documents": {
+		13, 25, 73, 75, 76,
+	},
+	"blacksmith": {
+		5, 6, 7, 8, 19, 20, 21, 22,
+	},
+	"miners": {
+		39, 40, 50, 51, 88,
+	},
+	"linkedparchments": {
+		87,
+	},
+	"farmer": {
+		34, 52, 60,
+	},
+	"fishermen&fishmonger": {
+		41, 49, 62,
+	},
+	"runes": {
+		78,
+	},
+	"carver": {
+		2, 3, 4,
+	},
+	"tailor": {
+		16, 17, 81,
+	},
+	"souls": {
+		83, 85, 124, 125,
+	},
+	"animals": {
+		18, 77, 91, 90, 97, 113, 116,
+	},
+	"shields": {
+		82,
+	},
 }
 
 // RuneModel represents a forgemagie rune that can be obtained by breaking items

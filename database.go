@@ -241,6 +241,8 @@ func (ds *DatabaseService) GetDB() *gorm.DB {
 func (ds *DatabaseService) initSchema() error {
 	// Auto-migrate the schema (creates tables if they don't exist)
 	err := ds.db.AutoMigrate(
+		&AuctionHouseModel{},
+		&AuctionHouseTranslationModel{},
 		&ItemTypeModel{},
 		&ItemTypeTranslationModel{},
 		&ItemModel{},
@@ -270,6 +272,7 @@ func (ds *DatabaseService) initSchema() error {
 	}
 
 	// Create unique constraints and indexes after auto-migration
+	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_auction_house_translations_unique ON auction_house_translations(auction_house_id, language)")
 	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_item_type_translations_unique ON item_type_translations(item_type_id, language)")
 	ds.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_item_translations_unique ON item_translations(item_id, language)")
 	ds.db.Exec("CREATE INDEX IF NOT EXISTS idx_item_translations_language ON item_translations(language)")
@@ -1304,8 +1307,8 @@ func (ds *DatabaseService) GetItemByIDAndLanguage(ankaId int, language string) (
 	return result, nil
 }
 
-// GetItemTypesByIDs retrieves item types by their AnkaIDs with translations for a specific language
-func (ds *DatabaseService) GetItemTypesByIDs(ankaIDs []int, language string) ([]ItemTypeModel, error) {
+// GetItemTypesByAnkaIDs retrieves item types by their AnkaIDs with translations for a specific language
+func (ds *DatabaseService) GetItemTypesByAnkaIDs(ankaIDs []int, language string) ([]ItemTypeModel, error) {
 	var itemTypes []ItemTypeModel
 
 	err := ds.db.
@@ -1399,10 +1402,11 @@ func (ds *DatabaseService) LoadRecipeRecursive(item *ItemModel, language string,
 	for i := range recipe.Ingredients {
 		ingredient := &recipe.Ingredients[i]
 
-		// Load the ingredient item with translations
+		// Load the ingredient item with translations and auction house
 		var ingredientItem ItemModel
 		err := ds.db.Preload("Translations", "language = ?", language).
 			Preload("Type.Translations", "language = ?", language).
+			Preload("Type.AuctionHouse.Translations", "language = ?", language).
 			Where("id = ?", ingredient.ItemID).
 			First(&ingredientItem).Error
 
@@ -1776,6 +1780,110 @@ func (ds *DatabaseService) SeedRunes() error {
 	}
 
 	fmt.Printf("Successfully seeded %d runes (%d with resolved item links)\n", len(RuneSeedData), resolvedCount)
+	return nil
+}
+
+// SeedAuctionHouses seeds the auction houses table with predefined data and updates item types
+func (ds *DatabaseService) SeedAuctionHouses() error {
+	fmt.Println("Seeding auction houses (delete and recreate)...")
+
+	// Begin transaction
+	tx := ds.db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Clear item type auction house references first (to avoid FK constraint issues)
+	if err := tx.Model(&ItemTypeModel{}).Where("auction_house_id IS NOT NULL").Update("auction_house_id", nil).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear item type auction house references: %v", err)
+	}
+
+	// Delete all auction house translations
+	if err := tx.Exec("DELETE FROM auction_house_translations").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete auction house translations: %v", err)
+	}
+
+	// Delete all auction houses
+	if err := tx.Exec("DELETE FROM auction_houses").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete auction houses: %v", err)
+	}
+
+	// Insert auction houses
+	for _, ah := range AuctionHouseSeedData {
+		ahModel := AuctionHouseModel{
+			ID:           ah.ID,
+			Code:         ah.Code,
+			DisplayOrder: ah.DisplayOrder,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		if err := tx.Create(&ahModel).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to insert auction house %s: %v", ah.Code, err)
+		}
+
+		// Insert translations for this auction house
+		if translations, exists := AuctionHouseTranslations[ah.Code]; exists {
+			for language, name := range translations {
+				translation := AuctionHouseTranslationModel{
+					AuctionHouseID: ah.ID,
+					Language:       language,
+					Name:           name,
+					CreatedAt:      time.Now(),
+					UpdatedAt:      time.Now(),
+				}
+
+				if err := tx.Create(&translation).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to insert translation for auction house %s (%s): %v", ah.Code, language, err)
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Successfully seeded %d auction houses with translations\n", len(AuctionHouseSeedData))
+
+	// Update item types with auction house mappings
+	itemTypesUpdated := 0
+	for ahCode, ankaIds := range AuctionHouseItemTypeMapping {
+		if len(ankaIds) == 0 {
+			continue
+		}
+
+		// Find the auction house ID
+		var ah AuctionHouseModel
+		if err := tx.Where("code = ?", ahCode).First(&ah).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find auction house %s: %v", ahCode, err)
+		}
+
+		// Update all item types with matching AnkaIds
+		result := tx.Model(&ItemTypeModel{}).
+			Where("anka_id IN ?", ankaIds).
+			Update("auction_house_id", ah.ID)
+
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update item types for auction house %s: %v", ahCode, result.Error)
+		}
+
+		itemTypesUpdated += int(result.RowsAffected)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	fmt.Printf("Successfully linked %d item types to auction houses\n", itemTypesUpdated)
 	return nil
 }
 

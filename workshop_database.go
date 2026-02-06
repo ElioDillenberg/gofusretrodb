@@ -2,6 +2,7 @@ package gofusretrodb
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -188,12 +189,15 @@ func (ds *DatabaseService) GetWorkshopListItemCount(listID uint) (int64, error) 
 
 // ResourceRequirement represents a resource needed for crafting
 type ResourceRequirement struct {
-	ItemID      uint
-	ItemAnkaID  int
-	TypeAnkaID  int
-	GfxID       int
-	Name        string
-	TotalNeeded int
+	ItemID                   uint
+	ItemAnkaID               int
+	TypeAnkaID               int
+	GfxID                    int
+	Name                     string
+	TotalNeeded              int
+	AuctionHouseID           *uint
+	AuctionHouseName         string
+	AuctionHouseDisplayOrder int
 }
 
 // GetAllResourcesForList calculates all unique resources needed for a workshop list
@@ -212,7 +216,7 @@ func (ds *DatabaseService) GetAllResourcesForList(listID uint, language string) 
 		}
 
 		// Calculate resources for this item * quantity
-		ds.aggregateRecipeResources(listItem.Item.Recipe, listItem.Quantity, resourceMap, language)
+		ds.aggregateRecipeResources(listItem.Item.Recipe, listItem.Quantity, resourceMap)
 	}
 
 	// Convert map to slice
@@ -224,8 +228,59 @@ func (ds *DatabaseService) GetAllResourcesForList(listID uint, language string) 
 	return resources, nil
 }
 
-// aggregateRecipeResources recursively adds up all base resources needed
-func (ds *DatabaseService) aggregateRecipeResources(recipe *RecipeModel, multiplier int, resources map[uint]*ResourceRequirement, language string) {
+// GetResourcesGroupedByAuctionHouse returns resources grouped by auction house
+// The key is the auction house name (empty string for items without an auction house)
+// Resources within each group are sorted alphabetically by name
+// Auction houses are sorted by their display order
+func (ds *DatabaseService) GetResourcesGroupedByAuctionHouse(listID uint, language string) (map[string][]ResourceRequirement, []string, error) {
+	resources, err := ds.GetAllResourcesForList(listID, language)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	grouped := make(map[string][]ResourceRequirement)
+	// Track auction house display order for sorting
+	ahDisplayOrder := make(map[string]int)
+
+	for _, res := range resources {
+		key := res.AuctionHouseName
+		grouped[key] = append(grouped[key], res)
+		// Store display order (only need to store once per auction house)
+		if _, exists := ahDisplayOrder[key]; !exists {
+			ahDisplayOrder[key] = res.AuctionHouseDisplayOrder
+		}
+	}
+
+	// Build order slice from auction house names (excluding empty string)
+	var order []string
+	for key := range grouped {
+		if key != "" {
+			order = append(order, key)
+		}
+	}
+
+	// Sort auction houses by display order
+	sort.Slice(order, func(i, j int) bool {
+		return ahDisplayOrder[order[i]] < ahDisplayOrder[order[j]]
+	})
+
+	// Add empty string key at the end if there are items without auction house
+	if len(grouped[""]) > 0 {
+		order = append(order, "")
+	}
+
+	// Sort resources within each group alphabetically by name
+	for key := range grouped {
+		sort.Slice(grouped[key], func(i, j int) bool {
+			return grouped[key][i].Name < grouped[key][j].Name
+		})
+	}
+
+	return grouped, order, nil
+}
+
+// aggregateRecipeResources recursively adds up all resources needed (including craftable items)
+func (ds *DatabaseService) aggregateRecipeResources(recipe *RecipeModel, multiplier int, resources map[uint]*ResourceRequirement) {
 	if recipe == nil {
 		return
 	}
@@ -233,27 +288,43 @@ func (ds *DatabaseService) aggregateRecipeResources(recipe *RecipeModel, multipl
 	for _, ingredient := range recipe.Ingredients {
 		needed := ingredient.Quantity * multiplier
 
-		// If ingredient has a recipe, recurse into it
-		if ingredient.Item.Recipe != nil {
-			ds.aggregateRecipeResources(ingredient.Item.Recipe, needed, resources, language)
+		// Always add the ingredient to resources (even if it's craftable)
+		if existing, ok := resources[ingredient.ItemID]; ok {
+			existing.TotalNeeded += needed
 		} else {
-			// Base resource - add to map
-			if existing, ok := resources[ingredient.ItemID]; ok {
-				existing.TotalNeeded += needed
-			} else {
-				name := ""
-				if len(ingredient.Item.Translations) > 0 {
-					name = ingredient.Item.Translations[0].Name
-				}
-				resources[ingredient.ItemID] = &ResourceRequirement{
-					ItemID:      ingredient.ItemID,
-					ItemAnkaID:  ingredient.Item.AnkaId,
-					TypeAnkaID:  ingredient.Item.TypeAnkaId,
-					GfxID:       ingredient.Item.GfxID,
-					Name:        name,
-					TotalNeeded: needed,
+			name := ""
+			if len(ingredient.Item.Translations) > 0 {
+				name = ingredient.Item.Translations[0].Name
+			}
+
+			// Get auction house info from preloaded item type
+			var ahID *uint
+			var ahName string
+			var ahDisplayOrder int
+			if ingredient.Item.Type != nil && ingredient.Item.Type.AuctionHouse != nil {
+				ahID = &ingredient.Item.Type.AuctionHouse.ID
+				ahDisplayOrder = ingredient.Item.Type.AuctionHouse.DisplayOrder
+				if len(ingredient.Item.Type.AuctionHouse.Translations) > 0 {
+					ahName = ingredient.Item.Type.AuctionHouse.Translations[0].Name
 				}
 			}
+
+			resources[ingredient.ItemID] = &ResourceRequirement{
+				ItemID:                   ingredient.ItemID,
+				ItemAnkaID:               ingredient.Item.AnkaId,
+				TypeAnkaID:               ingredient.Item.TypeAnkaId,
+				GfxID:                    ingredient.Item.GfxID,
+				Name:                     name,
+				TotalNeeded:              needed,
+				AuctionHouseID:           ahID,
+				AuctionHouseName:         ahName,
+				AuctionHouseDisplayOrder: ahDisplayOrder,
+			}
+		}
+
+		// If ingredient has a recipe, also recurse into it to get sub-ingredients
+		if ingredient.Item.Recipe != nil {
+			ds.aggregateRecipeResources(ingredient.Item.Recipe, needed, resources)
 		}
 	}
 }
@@ -291,4 +362,95 @@ func (ds *DatabaseService) RemoveItemFromWorkshopListByItemID(listID, itemID uin
 	ds.db.Model(&WorkshopListModel{}).Where("id = ?", listID).Update("updated_at", time.Now())
 
 	return nil
+}
+
+// ==================== Rune Calculations ====================
+
+// RuneRequirement represents a unique rune that can be obtained from breaking items in the list
+type RuneRequirement struct {
+	RuneID     int
+	ItemAnkaID int    // The rune item's AnkaID (for price store)
+	TypeAnkaID int    // Type AnkaID for image path
+	GfxID      int    // GfxID for image path
+	Name       string // Translated rune name
+	Code       string // Rune code (e.g., "fo", "pa_fo")
+	Tier       string // "ba", "pa", "ra", or "single"
+	Weight     float64
+}
+
+// GetUniqueRunesForList returns all unique runes that can be obtained from breaking items in a workshop list
+func (ds *DatabaseService) GetUniqueRunesForList(listID uint, language string) ([]RuneRequirement, error) {
+	list, err := ds.GetWorkshopListByID(listID, language)
+	if err != nil {
+		return nil, err
+	}
+
+	// Map to track unique runes by their ID
+	runeMap := make(map[int]*RuneRequirement)
+
+	for _, listItem := range list.Items {
+		// Get runes from the item's stats
+		for _, stat := range listItem.Item.Stats {
+			if len(stat.StatType.Runes) == 0 {
+				continue
+			}
+
+			for _, rune := range stat.StatType.Runes {
+				if _, exists := runeMap[rune.ID]; exists {
+					continue
+				}
+
+				// Get the rune name from its linked Item
+				name := ""
+				typeAnkaID := 0
+				gfxID := 0
+				itemAnkaID := 0
+
+				if rune.Item != nil {
+					itemAnkaID = rune.Item.AnkaId
+					typeAnkaID = rune.Item.TypeAnkaId
+					gfxID = rune.Item.GfxID
+
+					for _, t := range rune.Item.Translations {
+						if t.Language == language && t.Name != "" {
+							name = t.Name
+							break
+						}
+					}
+					// Fallback to first translation
+					if name == "" && len(rune.Item.Translations) > 0 {
+						name = rune.Item.Translations[0].Name
+					}
+				}
+
+				if name == "" {
+					name = rune.Code
+				}
+
+				runeMap[rune.ID] = &RuneRequirement{
+					RuneID:     rune.ID,
+					ItemAnkaID: itemAnkaID,
+					TypeAnkaID: typeAnkaID,
+					GfxID:      gfxID,
+					Name:       name,
+					Code:       rune.Code,
+					Tier:       rune.Tier,
+					Weight:     rune.Weight,
+				}
+			}
+		}
+	}
+
+	// Convert map to slice
+	var runes []RuneRequirement
+	for _, req := range runeMap {
+		runes = append(runes, *req)
+	}
+
+	// Sort by weight descending (higher weight = more valuable runes first)
+	sort.Slice(runes, func(i, j int) bool {
+		return runes[i].Weight > runes[j].Weight
+	})
+
+	return runes, nil
 }
