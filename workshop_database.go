@@ -50,11 +50,25 @@ func (ds *DatabaseService) GetWorkshopListByID(listID uint, language string) (*W
 		return nil, fmt.Errorf("failed to get workshop list: %v", err)
 	}
 
-	// Load recipes for each item
-	for i := range list.Items {
-		if err := ds.LoadRecipeRecursive(&list.Items[i].Item, language, 3, 0); err != nil {
-			// Don't fail if recipe loading fails, just continue
-			continue
+	// Collect all item IDs for batch recipe loading
+	itemIDs := make([]uint, 0, len(list.Items))
+	for _, item := range list.Items {
+		itemIDs = append(itemIDs, item.ItemID)
+	}
+
+	// Load all recipes in batch instead of individual queries per item
+	if len(itemIDs) > 0 {
+		recipeMap, err := ds.LoadRecipesBatch(itemIDs, language, 3)
+		if err != nil {
+			// Don't fail if recipe loading fails, just continue without recipes
+			return &list, nil
+		}
+
+		// Attach recipes to items
+		for i := range list.Items {
+			if recipe, ok := recipeMap[list.Items[i].ItemID]; ok {
+				list.Items[i].Item.Recipe = recipe
+			}
 		}
 	}
 

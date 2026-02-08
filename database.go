@@ -681,10 +681,24 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 		return nil, 0, fmt.Errorf("failed to search items: %v", query.Error)
 	}
 
-	// Recursively load full recipe trees for all items (max depth 10)
-	for i := range items {
-		if err := ds.LoadRecipeRecursive(&items[i], filters.Language, 3, 0); err != nil {
-			return nil, 0, fmt.Errorf("failed to load recipe tree for item %d: %v", items[i].ID, err)
+	// Batch load recipe trees for all items (much faster than individual queries)
+	if len(items) > 0 {
+		itemIDs := make([]uint, len(items))
+		for i, item := range items {
+			itemIDs[i] = item.ID
+		}
+
+		recipeMap, err := ds.LoadRecipesBatch(itemIDs, filters.Language, 3)
+		if err != nil {
+			// Don't fail if recipe loading fails, just continue without recipes
+			return items, totalCount, nil
+		}
+
+		// Attach recipes to items
+		for i := range items {
+			if recipe, ok := recipeMap[items[i].ID]; ok {
+				items[i].Recipe = recipe
+			}
 		}
 	}
 
@@ -1424,6 +1438,96 @@ func (ds *DatabaseService) LoadRecipeRecursive(item *ItemModel, language string,
 	}
 
 	return nil
+}
+
+// LoadRecipesBatch loads recipes for multiple items in batch, reducing N+1 query problem
+// Returns a map of itemID -> *RecipeModel with fully loaded ingredient trees
+func (ds *DatabaseService) LoadRecipesBatch(itemIDs []uint, language string, maxDepth int) (map[uint]*RecipeModel, error) {
+	if len(itemIDs) == 0 {
+		return make(map[uint]*RecipeModel), nil
+	}
+
+	result := make(map[uint]*RecipeModel)
+
+	// Load all recipes for the given items in one query
+	var recipes []RecipeModel
+	err := ds.db.Preload("Ingredients").
+		Where("item_id IN ?", itemIDs).
+		Find(&recipes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to load recipes batch: %v", err)
+	}
+
+	if len(recipes) == 0 {
+		return result, nil
+	}
+
+	// Map recipes by item ID
+	for i := range recipes {
+		result[recipes[i].ItemID] = &recipes[i]
+	}
+
+	// Collect all ingredient item IDs
+	ingredientItemIDs := make([]uint, 0)
+	ingredientItemIDSet := make(map[uint]bool)
+	for _, recipe := range recipes {
+		for _, ingredient := range recipe.Ingredients {
+			if !ingredientItemIDSet[ingredient.ItemID] {
+				ingredientItemIDs = append(ingredientItemIDs, ingredient.ItemID)
+				ingredientItemIDSet[ingredient.ItemID] = true
+			}
+		}
+	}
+
+	if len(ingredientItemIDs) == 0 {
+		return result, nil
+	}
+
+	// Load all ingredient items in one query
+	var ingredientItems []ItemModel
+	err = ds.db.Preload("Translations", "language = ?", language).
+		Preload("Type.Translations", "language = ?", language).
+		Preload("Type.AuctionHouse.Translations", "language = ?", language).
+		Where("id IN ?", ingredientItemIDs).
+		Find(&ingredientItems).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ingredient items batch: %v", err)
+	}
+
+	// Map ingredient items by ID
+	ingredientItemMap := make(map[uint]*ItemModel)
+	for i := range ingredientItems {
+		ingredientItemMap[ingredientItems[i].ID] = &ingredientItems[i]
+	}
+
+	// Attach ingredient items to recipe ingredients
+	for _, recipe := range recipes {
+		for i := range recipe.Ingredients {
+			if item, ok := ingredientItemMap[recipe.Ingredients[i].ItemID]; ok {
+				recipe.Ingredients[i].Item = *item
+			}
+		}
+	}
+
+	// Recursively load sub-recipes if we haven't reached max depth
+	if maxDepth > 1 {
+		subRecipeMap, err := ds.LoadRecipesBatch(ingredientItemIDs, language, maxDepth-1)
+		if err != nil {
+			// Don't fail on sub-recipe errors, just continue without them
+			return result, nil
+		}
+
+		// Attach sub-recipes to ingredient items
+		for _, recipe := range recipes {
+			for i := range recipe.Ingredients {
+				if subRecipe, ok := subRecipeMap[recipe.Ingredients[i].ItemID]; ok {
+					recipe.Ingredients[i].Item.Recipe = subRecipe
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 func (ds *DatabaseService) SaveItemStats(itemStatsMap map[int][]ItemStat) error {
