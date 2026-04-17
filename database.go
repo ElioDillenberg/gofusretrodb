@@ -544,8 +544,12 @@ type ItemSearchFilters struct {
 	MaxLevel      *int
 	LevelOrder    string // "asc", "desc", or empty for default
 	CraftableOnly bool   // If true, only return items that have a recipe
-	Limit         int
-	Offset        int
+	// IngredientCounts, when non-empty and CraftableOnly is true, restricts
+	// results to items whose recipe has a number of distinct ingredients
+	// matching any of the provided values (1-8).
+	IngredientCounts []int
+	Limit            int
+	Offset           int
 }
 
 // GetItemsSearchPaginated retrieves items with pagination and priority sorting at the database level
@@ -600,6 +604,14 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 	// Add craftable filter if provided
 	if filters.CraftableOnly {
 		baseQuery = baseQuery.Where("EXISTS (SELECT 1 FROM recipes WHERE recipes.item_id = items.id)")
+
+		// Ingredient count filter only applies when craftable-only is active.
+		if len(filters.IngredientCounts) > 0 {
+			baseQuery = baseQuery.Where(
+				"items.id IN (SELECT r.item_id FROM recipes r JOIN ingredients i ON i.recipe_id = r.id GROUP BY r.id HAVING COUNT(DISTINCT i.id) IN ?)",
+				filters.IngredientCounts,
+			)
+		}
 	}
 
 	// Get total count
@@ -662,6 +674,14 @@ func (ds *DatabaseService) GetItemsSearchPaginatedWithFilters(filters ItemSearch
 	// Add craftable filter if provided
 	if filters.CraftableOnly {
 		query = query.Where("EXISTS (SELECT 1 FROM recipes WHERE recipes.item_id = items.id)")
+
+		// Ingredient count filter only applies when craftable-only is active.
+		if len(filters.IngredientCounts) > 0 {
+			query = query.Where(
+				"items.id IN (SELECT r.item_id FROM recipes r JOIN ingredients i ON i.recipe_id = r.id GROUP BY r.id HAVING COUNT(DISTINCT i.id) IN ?)",
+				filters.IngredientCounts,
+			)
+		}
 	}
 
 	// Apply level ordering if specified
