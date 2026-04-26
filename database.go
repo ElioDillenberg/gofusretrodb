@@ -274,6 +274,7 @@ func (ds *DatabaseService) initSchema() error {
 		&ServerModel{},
 		&UserItemPriceModel{},
 		&ItemPriceHistoryModel{},
+		&DesktopLoginSessionModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
