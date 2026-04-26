@@ -27,7 +27,7 @@ type ItemTranslation struct {
 // Database models
 type ItemModel struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
-	AnkaId       int       `json:"anka_id" gorm:"default:0"`
+	AnkaId       int       `json:"anka_id" gorm:"default:0;unique"`
 	TypeAnkaId   int       `json:"type_anka_id" gorm:"default:0"` // References ItemType.AnkaId
 	Level        int       `json:"level" gorm:"default:0"`
 	Requirements string    `json:"requirements" gorm:"type:text"`
@@ -807,18 +807,37 @@ func GetMPRuneDropChance(level int) float64 {
 	return 0
 }
 
+// User role constants
+const (
+	RoleBasic = "basic"
+	RolePro   = "pro"
+	RoleAdmin = "admin"
+)
+
 // UserModel represents a user in the system
 type UserModel struct {
-	ID             uint       `json:"id" gorm:"primaryKey"`
-	Username       *string    `json:"username" gorm:"size:100;uniqueIndex"`           // Optional, can be set later in settings
-	EmailHash      string     `json:"email_hash" gorm:"size:64;uniqueIndex;not null"` // SHA-256 hash of email for lookups
-	EncryptedEmail string     `json:"encrypted_email" gorm:"size:255"`                // AES-GCM encrypted email for when we need to use it
-	DiscordID      *string    `json:"discord_id" gorm:"size:20;uniqueIndex"`          // Discord user ID for OAuth linking
-	IsAdmin        bool       `json:"is_admin" gorm:"default:false"`
-	IsDeleted      bool       `json:"is_deleted" gorm:"default:false"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	DeletedAt      *time.Time `json:"deleted_at"`
+	ID             uint         `json:"id" gorm:"primaryKey"`
+	Username       *string      `json:"username" gorm:"size:100;uniqueIndex"`           // Optional, can be set later in settings
+	EmailHash      string       `json:"email_hash" gorm:"size:64;uniqueIndex;not null"` // SHA-256 hash of email for lookups
+	EncryptedEmail string       `json:"encrypted_email" gorm:"size:255"`                // AES-GCM encrypted email for when we need to use it
+	DiscordID      *string      `json:"discord_id" gorm:"size:20;uniqueIndex"`          // Discord user ID for OAuth linking
+	Role           string       `json:"role" gorm:"size:10;default:'basic';not null"`   // "basic", "pro", or "admin"
+	ServerID       *uint        `json:"server_id" gorm:"index"`                         // Selected game server
+	Server         *ServerModel `json:"server,omitempty" gorm:"foreignKey:ServerID"`
+	IsDeleted      bool         `json:"is_deleted" gorm:"default:false"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
+	DeletedAt      *time.Time   `json:"deleted_at"`
+}
+
+// IsAdmin returns true if the user has admin role
+func (u UserModel) IsAdmin() bool {
+	return u.Role == RoleAdmin
+}
+
+// IsPro returns true if the user has pro or admin role
+func (u UserModel) IsPro() bool {
+	return u.Role == RolePro || u.Role == RoleAdmin
 }
 
 func (UserModel) TableName() string {
@@ -901,4 +920,38 @@ type OAuthStateModel struct {
 
 func (OAuthStateModel) TableName() string {
 	return "oauth_states"
+}
+
+// DesktopLoginSession statuses
+const (
+	DesktopLoginStatusPending          = "pending"           // code issued, waiting for user approval
+	DesktopLoginStatusApproved         = "approved"          // user approved; exchange ticket available via poll
+	DesktopLoginStatusAwaitingExchange = "awaiting_exchange" // poll delivered the ticket; waiting for exchange
+	DesktopLoginStatusConsumed         = "consumed"          // session token delivered to desktop; terminal
+	DesktopLoginStatusDenied           = "denied"            // user denied; terminal
+)
+
+// DesktopLoginSessionModel represents a pairing session for desktop-app authentication.
+// The flow is: desktop -> start (creates row) -> user approves in browser -> desktop polls
+// and receives an exchange ticket -> desktop exchanges it for the underlying web session token.
+type DesktopLoginSessionModel struct {
+	ID             uint   `json:"id" gorm:"primaryKey"`
+	Code           string `json:"code" gorm:"size:32;uniqueIndex;not null"`          // short, user-visible pairing code
+	DeviceID       string `json:"device_id" gorm:"size:64;index;not null"`           // desktop-generated UUID
+	DeviceName     string `json:"device_name" gorm:"size:128"`                       // human-readable device label
+	PollSecretHash string `json:"poll_secret_hash" gorm:"size:64;not null"`          // sha256 hex of the poll secret
+	Status         string `json:"status" gorm:"size:24;not null"`                    // see DesktopLoginStatus* constants
+	UserID         *uint  `json:"user_id" gorm:"index"`                              // set on approval
+	ExchangeTicketHash *string    `json:"exchange_ticket_hash" gorm:"size:64"`         // sha256 hex of one-time exchange ticket
+	SessionToken       *string    `json:"session_token" gorm:"size:255"`               // held between approve and consume
+	ExpiresAt          time.Time  `json:"expires_at" gorm:"not null"`
+	ApprovedAt         *time.Time `json:"approved_at"`
+	ConsumedAt         *time.Time `json:"consumed_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	User               *UserModel `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+func (DesktopLoginSessionModel) TableName() string {
+	return "desktop_login_sessions"
 }

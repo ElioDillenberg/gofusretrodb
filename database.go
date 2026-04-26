@@ -220,6 +220,11 @@ func NewDatabaseService(dsn string) (*DatabaseService, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %v", err)
 	}
 
+	// Seed servers
+	if err := service.SeedServers(); err != nil {
+		return nil, fmt.Errorf("failed to seed servers: %v", err)
+	}
+
 	return service, nil
 }
 
@@ -266,6 +271,9 @@ func (ds *DatabaseService) initSchema() error {
 		&OAuthStateModel{},
 		&WorkshopListModel{},
 		&WorkshopListItemModel{},
+		&ServerModel{},
+		&UserItemPriceModel{},
+		&ItemPriceHistoryModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
@@ -2135,7 +2143,7 @@ func (ds *DatabaseService) CreateUser(email string, isAdmin bool) (*UserModel, e
 	user := &UserModel{
 		EmailHash:      HashEmail(email),
 		EncryptedEmail: encryptedEmail,
-		IsAdmin:        isAdmin,
+		Role:           RoleBasic,
 		IsDeleted:      false,
 	}
 
@@ -2304,7 +2312,7 @@ func (ds *DatabaseService) DeleteUserSessions(userID uint) error {
 // CountAdminUsers returns the number of admin users
 func (ds *DatabaseService) CountAdminUsers() (int64, error) {
 	var count int64
-	if err := ds.db.Model(&UserModel{}).Where("is_admin = ? AND is_deleted = ?", true, false).Count(&count).Error; err != nil {
+	if err := ds.db.Model(&UserModel{}).Where("role = ? AND is_deleted = ?", RoleAdmin, false).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -2534,7 +2542,7 @@ func (ds *DatabaseService) CreateUserWithDiscord(email, discordID string, isAdmi
 		EmailHash:      HashEmail(email),
 		EncryptedEmail: encryptedEmail,
 		DiscordID:      &discordID,
-		IsAdmin:        isAdmin,
+		Role:           RoleBasic,
 		IsDeleted:      false,
 	}
 
