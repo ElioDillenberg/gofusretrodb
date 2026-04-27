@@ -955,3 +955,38 @@ type DesktopLoginSessionModel struct {
 func (DesktopLoginSessionModel) TableName() string {
 	return "desktop_login_sessions"
 }
+
+// Feedback type constants
+const (
+	FeedbackTypeFeedback = "feedback"
+	FeedbackTypeBug      = "bug"
+)
+
+// Feedback status constants
+const (
+	FeedbackStatusOpen        = "open"
+	FeedbackStatusWip         = "wip"
+	FeedbackStatusImplemented = "implemented"
+	FeedbackStatusClosed      = "closed"
+	FeedbackStatusWontFix     = "wont_fix"
+)
+
+// FeedbackModel represents a user-submitted feedback or bug report
+type FeedbackModel struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	UserID       *uint      `json:"user_id" gorm:"index"`
+	User         *UserModel `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Type         string     `json:"type" gorm:"size:20;not null;default:'feedback'"` // "feedback" or "bug"
+	Message      string     `json:"message" gorm:"type:text;not null"`
+	DiscordTag   string     `json:"discord_tag" gorm:"size:100"`   // Optional free-text discord username
+	WantsUpdates bool       `json:"wants_updates" gorm:"default:false"` // Only actionable when UserID is set (email needed)
+	Status       string     `json:"status" gorm:"size:20;not null;default:'open'"` // open, wip, implemented, closed, wont_fix
+	AdminNote    string     `json:"admin_note" gorm:"type:text"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+func (FeedbackModel) TableName() string {
+	return "feedbacks"
+}
+

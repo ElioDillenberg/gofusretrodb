@@ -275,6 +275,7 @@ func (ds *DatabaseService) initSchema() error {
 		&UserItemPriceModel{},
 		&ItemPriceHistoryModel{},
 		&DesktopLoginSessionModel{},
+		&FeedbackModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
@@ -2575,3 +2576,53 @@ func (ds *DatabaseService) LinkDiscordToUser(userID uint, discordID string) erro
 func (ds *DatabaseService) UnlinkDiscordFromUser(userID uint) error {
 	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("discord_id", nil).Error
 }
+
+// ==================== Feedback Management ====================
+
+// CreateFeedback creates a new feedback/bug report entry.
+func (ds *DatabaseService) CreateFeedback(feedback *FeedbackModel) error {
+	return ds.db.Create(feedback).Error
+}
+
+// ListFeedback returns a paginated list of feedback entries filtered by status.
+// Pass statusFilter="" or "all" to return all statuses.
+func (ds *DatabaseService) ListFeedback(statusFilter string, page, perPage int) ([]FeedbackModel, int64, error) {
+	var feedbacks []FeedbackModel
+	var total int64
+
+	query := ds.db.Model(&FeedbackModel{}).Preload("User")
+	if statusFilter != "" && statusFilter != "all" {
+		query = query.Where("status = ?", statusFilter)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * perPage
+	if err := query.Order("created_at DESC").Offset(offset).Limit(perPage).Find(&feedbacks).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return feedbacks, total, nil
+}
+
+// GetFeedbackByID returns a single feedback entry with the linked user preloaded.
+func (ds *DatabaseService) GetFeedbackByID(id uint) (*FeedbackModel, error) {
+	var feedback FeedbackModel
+	if err := ds.db.Preload("User").First(&feedback, id).Error; err != nil {
+		return nil, err
+	}
+	return &feedback, nil
+}
+
+// UpdateFeedbackStatus updates the status and admin note of a feedback entry
+// and returns the refreshed model (with User preloaded) for notification purposes.
+func (ds *DatabaseService) UpdateFeedbackStatus(id uint, status, adminNote string) (*FeedbackModel, error) {
+	if err := ds.db.Model(&FeedbackModel{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"status": status, "admin_note": adminNote}).Error; err != nil {
+		return nil, err
+	}
+	return ds.GetFeedbackByID(id)
+}
+
