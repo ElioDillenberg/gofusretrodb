@@ -989,4 +989,3 @@ type FeedbackModel struct {
 func (FeedbackModel) TableName() string {
 	return "feedbacks"
 }
-
