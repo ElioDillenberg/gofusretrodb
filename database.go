@@ -276,6 +276,7 @@ func (ds *DatabaseService) initSchema() error {
 		&ItemPriceHistoryModel{},
 		&DesktopLoginSessionModel{},
 		&FeedbackModel{},
+		&UserPreferencesModel{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate schema: %v", err)
@@ -2271,6 +2272,12 @@ func (ds *DatabaseService) HardDeleteUser(userID uint) error {
 	if err := tx.Where("user_id = ?", userID).Delete(&ItemPriceHistoryModel{}).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to delete price history: %v", err)
+	}
+
+	// Delete user preferences
+	if err := tx.Where("user_id = ?", userID).Delete(&UserPreferencesModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete user preferences: %v", err)
 	}
 
 	// Delete the user

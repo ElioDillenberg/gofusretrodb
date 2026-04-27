@@ -2,6 +2,7 @@ package gofusretrodb
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -56,18 +57,103 @@ func (ds *DatabaseService) GetServerByID(id uint) (*ServerModel, error) {
 	return &server, nil
 }
 
-// SetUserServer sets the user's selected game server
+// SetUserServer sets the user's selected game server in user_preferences
 func (ds *DatabaseService) SetUserServer(userID, serverID uint) error {
-	return ds.db.Model(&UserModel{}).Where("id = ?", userID).Update("server_id", serverID).Error
+	prefs, err := ds.GetOrCreateUserPreferences(userID)
+	if err != nil {
+		return err
+	}
+	return ds.db.Model(prefs).Update("server_id", serverID).Error
 }
 
 // GetUserServer returns the user's selected server (nil if none set)
 func (ds *DatabaseService) GetUserServer(userID uint) (*ServerModel, error) {
-	var user UserModel
-	if err := ds.db.Preload("Server").First(&user, userID).Error; err != nil {
+	prefs, err := ds.GetOrCreateUserPreferences(userID)
+	if err != nil {
 		return nil, err
 	}
-	return user.Server, nil // nil if no server selected
+	if prefs.ServerID == nil {
+		return nil, nil
+	}
+	return ds.GetServerByID(*prefs.ServerID)
+}
+
+// GetOrCreateUserPreferences returns the user_preferences row for the given user,
+// creating a default row (browser mode, no server) if it doesn't exist yet.
+func (ds *DatabaseService) GetOrCreateUserPreferences(userID uint) (*UserPreferencesModel, error) {
+	var prefs UserPreferencesModel
+	result := ds.db.Where(UserPreferencesModel{UserID: userID}).
+		Attrs(UserPreferencesModel{PriceSaveMode: "browser"}).
+		FirstOrCreate(&prefs)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get/create user preferences for user %d: %v", userID, result.Error)
+	}
+	return &prefs, nil
+}
+
+// GetUserWithPreferences fetches a user and their preferences in two queries.
+// Returns the user and a guaranteed non-nil preferences (created if missing).
+func (ds *DatabaseService) GetUserWithPreferences(userID uint) (*UserModel, *UserPreferencesModel, error) {
+	user, err := ds.GetUserByID(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	prefs, err := ds.GetOrCreateUserPreferences(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return user, prefs, nil
+}
+
+// SetPriceSaveMode updates the price_save_mode preference for a user.
+// Only "browser" and "cloud" are valid values.
+func (ds *DatabaseService) SetPriceSaveMode(userID uint, mode string) error {
+	if mode != "browser" && mode != "cloud" {
+		return fmt.Errorf("invalid price_save_mode %q: must be 'browser' or 'cloud'", mode)
+	}
+	prefs, err := ds.GetOrCreateUserPreferences(userID)
+	if err != nil {
+		return err
+	}
+	return ds.db.Model(prefs).Update("price_save_mode", mode).Error
+}
+
+// MigrateServerIDToPreferences copies non-null users.server_id values into
+// user_preferences rows. Safe to call multiple times (skips users that already
+// have a preferences row with a server set). Called once at startup.
+func (ds *DatabaseService) MigrateServerIDToPreferences() error {
+	// Find all users with a non-null server_id
+	var users []UserModel
+	if err := ds.db.Where("server_id IS NOT NULL").Find(&users).Error; err != nil {
+		return fmt.Errorf("MigrateServerIDToPreferences: failed to query users: %v", err)
+	}
+
+	migrated := 0
+	for _, u := range users {
+		if u.ServerID == nil {
+			continue
+		}
+		// Only set if not already set in preferences
+		prefs, err := ds.GetOrCreateUserPreferences(u.ID)
+		if err != nil {
+			log.Printf("MigrateServerIDToPreferences: skipping user %d: %v", u.ID, err)
+			continue
+		}
+		if prefs.ServerID != nil {
+			// Already has a server in preferences — leave it alone
+			continue
+		}
+		if err := ds.db.Model(prefs).Update("server_id", *u.ServerID).Error; err != nil {
+			log.Printf("MigrateServerIDToPreferences: failed to set server for user %d: %v", u.ID, err)
+			continue
+		}
+		migrated++
+	}
+
+	if migrated > 0 {
+		log.Printf("MigrateServerIDToPreferences: migrated %d user(s)", migrated)
+	}
+	return nil
 }
 
 // ==================== Price Management ====================

@@ -814,20 +814,38 @@ const (
 	RoleAdmin = "admin"
 )
 
+// UserPreferencesModel stores per-user application preferences.
+// One row per user (unique on user_id). Created lazily on first access via
+// GetOrCreateUserPreferences. Replaces the legacy users.server_id column and
+// the browser-localStorage gofus-save-mode key.
+type UserPreferencesModel struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	UserID        uint      `json:"user_id" gorm:"uniqueIndex;not null"`
+	ServerID      *uint     `json:"server_id" gorm:"index"`                                     // Selected game server (nullable — not yet chosen)
+	PriceSaveMode string    `json:"price_save_mode" gorm:"size:10;not null;default:'browser'"` // "browser" or "cloud"
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (UserPreferencesModel) TableName() string {
+	return "user_preferences"
+}
+
 // UserModel represents a user in the system
 type UserModel struct {
-	ID             uint         `json:"id" gorm:"primaryKey"`
-	Username       *string      `json:"username" gorm:"size:100;uniqueIndex"`           // Optional, can be set later in settings
-	EmailHash      string       `json:"email_hash" gorm:"size:64;uniqueIndex;not null"` // SHA-256 hash of email for lookups
-	EncryptedEmail string       `json:"encrypted_email" gorm:"size:255"`                // AES-GCM encrypted email for when we need to use it
-	DiscordID      *string      `json:"discord_id" gorm:"size:20;uniqueIndex"`          // Discord user ID for OAuth linking
-	Role           string       `json:"role" gorm:"size:10;default:'basic';not null"`   // "basic", "pro", or "admin"
-	ServerID       *uint        `json:"server_id" gorm:"index"`                         // Selected game server
-	Server         *ServerModel `json:"server,omitempty" gorm:"foreignKey:ServerID"`
-	IsDeleted      bool         `json:"is_deleted" gorm:"default:false"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	DeletedAt      *time.Time   `json:"deleted_at"`
+	ID             uint                  `json:"id" gorm:"primaryKey"`
+	Username       *string               `json:"username" gorm:"size:100;uniqueIndex"`           // Optional, can be set later in settings
+	EmailHash      string                `json:"email_hash" gorm:"size:64;uniqueIndex;not null"` // SHA-256 hash of email for lookups
+	EncryptedEmail string                `json:"encrypted_email" gorm:"size:255"`                // AES-GCM encrypted email for when we need to use it
+	DiscordID      *string               `json:"discord_id" gorm:"size:20;uniqueIndex"`          // Discord user ID for OAuth linking
+	Role           string                `json:"role" gorm:"size:10;default:'basic';not null"`   // "basic", "pro", or "admin"
+	ServerID       *uint                 `json:"server_id" gorm:"index"`                         // DEPRECATED: use UserPreferencesModel.ServerID — kept for backfill migration
+	Server         *ServerModel          `json:"server,omitempty" gorm:"foreignKey:ServerID"`
+	Preferences    *UserPreferencesModel `json:"preferences,omitempty" gorm:"foreignKey:UserID"`
+	IsDeleted      bool                  `json:"is_deleted" gorm:"default:false"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	DeletedAt      *time.Time            `json:"deleted_at"`
 }
 
 // IsAdmin returns true if the user has admin role
