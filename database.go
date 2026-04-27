@@ -2260,6 +2260,18 @@ func (ds *DatabaseService) HardDeleteUser(userID uint) error {
 		return fmt.Errorf("failed to delete magic links: %v", err)
 	}
 
+	// Delete all current item prices
+	if err := tx.Where("user_id = ?", userID).Delete(&UserItemPriceModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete item prices: %v", err)
+	}
+
+	// Delete all price history entries
+	if err := tx.Where("user_id = ?", userID).Delete(&ItemPriceHistoryModel{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete price history: %v", err)
+	}
+
 	// Delete the user
 	if err := tx.Delete(&UserModel{}, userID).Error; err != nil {
 		tx.Rollback()
